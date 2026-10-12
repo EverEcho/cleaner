@@ -2,6 +2,7 @@
 import { ref, computed, onMounted } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
 import { ElMessage } from 'element-plus';
+import { platformInfo, loadPlatform } from '../platform';
 import PageHeader from '../layout/PageHeader.vue';
 
 const scanning = ref(false);
@@ -17,6 +18,7 @@ const filteredEntries = computed(() => {
 async function loadDesktopEntries() {
   scanning.value = true;
   try {
+    await loadPlatform();
     desktopEntries.value = await invoke('get_desktop_entries');
   } catch (e: any) {
     ElMessage.error('加载启动器失败: ' + e);
@@ -28,6 +30,7 @@ async function loadDesktopEntries() {
 async function handleToggleEntry(entry: any) {
   try {
     await invoke('toggle_desktop_visibility', { path: entry.path, visible: entry.visible });
+    await loadDesktopEntries();
     ElMessage.success(`已在菜单中${entry.visible ? '显示' : '隐藏'}: ${entry.name}`);
   } catch (e: any) {
     entry.visible = !entry.visible;
@@ -50,6 +53,7 @@ onMounted(() => {
     </PageHeader>
 
     <div class="subpage-content">
+      <el-alert v-if="platformInfo && !platformInfo.desktop_visibility" title="此系统的应用入口仅供查看，可见性由系统管理。" type="info" :closable="false" />
       <el-table :data="filteredEntries" height="100%" stripe style="width: 100%" v-loading="scanning">
         <el-table-column prop="name" label="启动器名称" min-width="180" />
         <el-table-column prop="scope" label="作用域" width="90">
@@ -63,6 +67,7 @@ onMounted(() => {
           <template #default="{ row }">
             <el-switch
               v-model="row.visible"
+              :disabled="!platformInfo?.desktop_visibility"
               active-color="#10b981"
               @change="handleToggleEntry(row)"
             />

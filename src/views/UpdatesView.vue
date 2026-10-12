@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue';
+import { ref, computed, onMounted, onUnmounted } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import PageHeader from '../layout/PageHeader.vue';
@@ -14,7 +14,8 @@ interface UpgradablePkg {
   repository: string;
 }
 
-import { listen } from '@tauri-apps/api/event';
+import { platformInfo } from '../platform';
+import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 
 const checking = ref(false);
 const refreshing = ref(false);
@@ -24,10 +25,10 @@ const updates = ref<UpgradablePkg[]>([]);
 const search = ref('');
 const filterManager = ref('all');
 
-// 监听 Rust 后端广播的实时日志与进度
-listen<string>('update-log', (event) => {
-  currentLog.value = event.payload;
-});
+const errorMessage = ref('');
+let unlisten: UnlistenFn | undefined;
+let disposed = false;
+onUnmounted(() => { disposed = true; unlisten?.(); });
 
 const availableManagers = computed(() => {
   const set = new Set(updates.value.map((u) => u.manager));
@@ -47,16 +48,18 @@ const filteredUpdates = computed(() => {
 
 async function checkUpdates() {
   checking.value = true;
+  errorMessage.value = '';
   currentLog.value = '正在跨包管理器检测可用更新…';
   try {
     const list: UpgradablePkg[] = await invoke('check_software_updates');
     updates.value = list;
     if (list.length === 0) {
-      ElMessage.success('系统软件已是最新版本！');
+      ElMessage.success('当前软件源未发现可用更新');
     } else {
       ElMessage.info(`检测到 ${list.length} 个可更新的软件包`);
     }
   } catch (err: any) {
+    errorMessage.value = String(err);
     ElMessage.error('检查更新失败: ' + err);
   } finally {
     checking.value = false;
@@ -102,13 +105,15 @@ async function handleUpgrade(pkg: UpgradablePkg) {
 }
 
 onMounted(() => {
+  listen<string>('update-log', event => { currentLog.value = event.payload; })
+    .then(stop => { if (disposed) stop(); else unlisten = stop; }).catch(() => {});
   checkUpdates();
 });
 </script>
 
 <template>
   <div class="subpage-container">
-    <PageHeader title="软件更新检测 (APT / DNF / YUM / Pacman / Flatpak)">
+    <PageHeader title="软件更新检测">
       <template #actions>
         <el-input
           v-model="search"
@@ -147,9 +152,9 @@ onMounted(() => {
         ]"
       />
       <div v-else-if="updates.length === 0" class="empty-status">
-        <el-icon :size="54" color="#10b981"><CircleCheck /></el-icon>
-        <div class="empty-title">当前所有软件已是最新版本</div>
-        <div class="empty-sub">支持自动检测 apt、yum/dnf、pacman、zypper 和 flatpak 包管理器</div>
+        <el-icon :size="54" :color="errorMessage ? '#e6a23c' : '#00bd86'"><Warning v-if="errorMessage" /><CircleCheck v-else /></el-icon>
+        <div class="empty-title">{{ errorMessage ? '检查更新未完成' : '当前软件源未发现可用更新' }}</div>
+        <div class="empty-sub">{{ errorMessage || platformInfo?.updates_note }}</div>
       </div>
 
       <el-table
@@ -187,6 +192,7 @@ onMounted(() => {
               type="primary"
               size="small"
               :loading="upgradingPkg === row.name"
+              :disabled="row.manager === 'pacman' || (!!upgradingPkg && upgradingPkg !== row.name)"
               @click="handleUpgrade(row)"
             >
               立即升级

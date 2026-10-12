@@ -1,87 +1,61 @@
 #!/usr/bin/env bash
-# 软件管家 · 安装/卸载/管理脚本 (Tauri 版本)
+# Install desktop entry on Linux; an app bundle in ~/Applications on macOS.
 set -euo pipefail
-
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BIN="$ROOT/src-tauri/target/release/tauri-app"
-TARGET="${XDG_DATA_HOME:-$HOME/.local/share}/applications/cn.workbuddy.appsteward.desktop"
-ICON_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/icons/hicolor/128x128/apps"
+OS="$(uname -s)"
+DATA_DIR="${XDG_DATA_HOME:-$HOME/.local/share}"
+TARGET="$DATA_DIR/applications/cn.workbuddy.appsteward.desktop"
+ICON_DIR="$DATA_DIR/icons/hicolor/128x128/apps"
+MAC_APP="$HOME/Applications/软件管家.app"
 
-ensure_bin() {
-    if [[ ! -f "$BIN" ]]; then
-        echo "未发现 release 二进制文件，正在自动编译 (pnpm tauri build)..."
-        (cd "$ROOT" && pnpm tauri build --no-bundle)
+uninstall() {
+  if [[ "$OS" == Darwin ]]; then
+    if [[ -d "$MAC_APP" ]]; then
+      # Keep removal reversible, and let Finder handle name collisions in Trash.
+      /usr/bin/osascript -e 'on run argv' -e 'tell application "Finder" to delete POSIX file (item 1 of argv)' -e 'end run' "$MAC_APP"
     fi
+  else
+    rm -f "$TARGET" "$ICON_DIR/cn.workbuddy.appsteward.png"
+    command -v update-desktop-database >/dev/null && update-desktop-database "$(dirname "$TARGET")" >/dev/null 2>&1 || true
+  fi
+  echo '已移除软件管家应用入口。会话授权助手需通过 run.sh authorize uninstall 单独移除。'
 }
-
-do_uninstall() {
-    echo "正在卸载软件管家启动器..."
-    if [[ -f "$TARGET" ]]; then
-        rm -f "$TARGET"
-        echo "已移除启动器: $TARGET"
-    else
-        echo "未发现已安装的启动器: $TARGET"
-    fi
-
-    if command -v update-desktop-database >/dev/null 2>&1; then
-        update-desktop-database "$(dirname "$TARGET")" >/dev/null 2>&1 || true
-    fi
-    echo "卸载完成。"
-}
-
-do_install() {
-    echo "正在安装软件管家..."
-    ensure_bin
-
-    chmod +x "$BIN"
+install() {
+  if [[ "$OS" == Darwin ]]; then
+    (cd "$ROOT" && pnpm tauri build --bundles app)
+    mkdir -p "$HOME/Applications"
+    # ditto merges bundles, so remove the old bundle first by moving it to Trash.
+    [[ ! -e "$MAC_APP" ]] || uninstall
+    /usr/bin/ditto "$ROOT/src-tauri/target/release/bundle/macos/软件管家.app" "$MAC_APP"
+    echo "已安装: $MAC_APP"
+  else
+    [[ -x "$BIN" ]] || (cd "$ROOT" && pnpm tauri build --no-bundle)
     mkdir -p "$(dirname "$TARGET")" "$ICON_DIR"
-
-    # 安装应用图标
-    if [[ -f "$ROOT/src-tauri/icons/128x128.png" ]]; then
-        cp "$ROOT/src-tauri/icons/128x128.png" "$ICON_DIR/cn.workbuddy.appsteward.png"
-    fi
-
-    # 写入 desktop 文件
-    cat <<EOF > "$TARGET"
+    cp "$ROOT/src-tauri/icons/128x128.png" "$ICON_DIR/cn.workbuddy.appsteward.png"
+    # Desktop Entry quoted argument escaping, including spaces and literal %.
+    local quoted_bin="$BIN"
+    quoted_bin="${quoted_bin//\\/\\\\}"; quoted_bin="${quoted_bin//\"/\\\"}"
+    quoted_bin="${quoted_bin//\$/\\\$}"; quoted_bin="${quoted_bin//\`/\\\`}"
+    quoted_bin="${quoted_bin//%/%%}"
+    cat > "$TARGET" <<ENTRY
 [Desktop Entry]
 Type=Application
 Name=软件管家
-Comment=系统垃圾清理、大文件/重复文件查找、应用强力卸载与启动项管理
-Exec=$BIN
+Comment=系统清理、空间分析、应用与启动项管理
+Exec="$quoted_bin"
 Icon=cn.workbuddy.appsteward
 Terminal=false
-Categories=System;Settings;Utility;
-Keywords=清理;卸载;启动项;大文件;重复文件;clean;uninstall;
+Categories=System;Utility;
 StartupNotify=true
-EOF
-
-    chmod +x "$TARGET"
-
-    if command -v update-desktop-database >/dev/null 2>&1; then
-        update-desktop-database "$(dirname "$TARGET")" >/dev/null 2>&1 || true
-    fi
-
-    echo "已成功安装启动器：$TARGET"
-    echo "现在可在系统应用菜单搜索「软件管家」或直接执行 $BIN"
+ENTRY
+    command -v update-desktop-database >/dev/null && update-desktop-database "$(dirname "$TARGET")" >/dev/null 2>&1 || true
+    echo "已安装: $TARGET"
+  fi
 }
-
-action="${1:-install}"
-
-case "$action" in
-    install)
-        do_install
-        ;;
-    uninstall|remove)
-        do_uninstall
-        ;;
-    reinstall|force-reinstall)
-        echo "执行重新安装..."
-        do_uninstall
-        do_install
-        ;;
-    *)
-        echo "用法: $0 [install | uninstall | reinstall]"
-        exit 1
-        ;;
+case "$OS" in Linux|Darwin) ;; *) echo 'Windows 尚在规划中。'; exit 1 ;; esac
+case "${1:-install}" in
+  install) install ;; uninstall|remove) uninstall ;; reinstall|force-reinstall) install ;;
+  help|--help|-h) echo "用法: $0 [install|uninstall|reinstall]" ;;
+  *) echo '未知操作'; exit 1 ;;
 esac
-

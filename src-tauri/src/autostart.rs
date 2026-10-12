@@ -1,94 +1,73 @@
-use std::fs;
-use std::path::Path;
-use crate::models::AutostartItem;
+use crate::{desktop, models::AutostartItem, platform};
+use std::{
+    collections::HashSet,
+    fs,
+    path::{Path, PathBuf},
+};
+
+fn roots() -> Vec<(PathBuf, bool)> {
+    let mut roots = Vec::new();
+    if let Some(config) = platform::xdg_dir("XDG_CONFIG_HOME", ".config") {
+        roots.push((config.join("autostart"), true));
+    }
+    let config_dirs = std::env::var_os("XDG_CONFIG_DIRS").unwrap_or_else(|| "/etc/xdg".into());
+    roots.extend(
+        std::env::split_paths(&config_dirs)
+            .filter(|p| p.is_absolute())
+            .map(|p| (p.join("autostart"), false)),
+    );
+    roots
+}
 
 pub fn scan_autostart_items() -> Vec<AutostartItem> {
     let mut items = Vec::new();
-    let home = std::env::var("HOME").unwrap_or_default();
-
-    let mut dirs = Vec::new();
-    if !home.is_empty() {
-        dirs.push((format!("{}/.config/autostart", home), true));
-    }
-    dirs.push(("/etc/xdg/autostart".to_string(), false));
-
-    for (dir_path, is_user) in dirs {
-        let dir = Path::new(&dir_path);
-        if !dir.is_dir() {
-            continue;
-        }
-        if let Ok(entries) = fs::read_dir(dir) {
+    let mut seen = HashSet::new();
+    for (root, is_user) in roots() {
+        if let Ok(entries) = fs::read_dir(root) {
             for entry in entries.flatten() {
                 let path = entry.path();
-                if path.extension().and_then(|s| s.to_str()) == Some("desktop") {
-                    if let Ok(content) = fs::read_to_string(&path) {
-                        let mut name = String::new();
-                        let mut exec = String::new();
-                        let mut icon = String::new();
-                        let mut comment = String::new();
-                        let mut enabled = true;
-
-                        for line in content.lines() {
-                            let line = line.trim();
-                            if line.starts_with("Name=") && name.is_empty() {
-                                name = line[5..].to_string();
-                            } else if line.starts_with("Exec=") && exec.is_empty() {
-                                exec = line[5..].to_string();
-                            } else if line.starts_with("Icon=") && icon.is_empty() {
-                                icon = line[5..].to_string();
-                            } else if line.starts_with("Comment=") && comment.is_empty() {
-                                comment = line[8..].to_string();
-                            } else if line == "X-GNOME-Autostart-enabled=false" || line == "Hidden=true" {
-                                enabled = false;
-                            }
-                        }
-
-                        if name.is_empty() {
-                            name = path.file_stem().and_then(|s| s.to_str()).unwrap_or("未知").to_string();
-                        }
-
-                        items.push(AutostartItem {
-                            path: path.to_string_lossy().to_string(),
-                            name,
-                            exec,
-                            icon,
-                            comment,
-                            enabled,
-                            is_user,
-                        });
-                    }
+                if path.extension().is_none_or(|s| s != "desktop")
+                    || !seen.insert(path.file_name().unwrap_or_default().to_owned())
+                {
+                    continue;
                 }
+                let Ok(content) = fs::read_to_string(&path) else {
+                    continue;
+                };
+                let fields = desktop::fields(&content);
+                items.push(AutostartItem {
+                    path: path.to_string_lossy().into_owned(),
+                    name: fields.get("Name").copied().unwrap_or("未知应用").into(),
+                    exec: fields.get("Exec").copied().unwrap_or("").into(),
+                    icon: fields.get("Icon").copied().unwrap_or("").into(),
+                    comment: fields.get("Comment").copied().unwrap_or("").into(),
+                    enabled: fields.get("Hidden") != Some(&"true")
+                        && fields.get("X-GNOME-Autostart-enabled") != Some(&"false"),
+                    is_user,
+                });
             }
         }
     }
-
+    items.sort_by(|a, b| a.name.cmp(&b.name));
     items
 }
 
 pub fn toggle_autostart(path: &str, enable: bool) -> Result<String, String> {
-    let p = Path::new(path);
-    if !p.exists() {
-        return Err("开机启动项文件不存在".to_string());
-    }
-
-    let content = fs::read_to_string(p).map_err(|e| e.to_string())?;
-    let mut new_lines = Vec::new();
-    let mut found = false;
-
-    for line in content.lines() {
-        if line.starts_with("X-GNOME-Autostart-enabled=") {
-            new_lines.push(format!("X-GNOME-Autostart-enabled={}", enable));
-            found = true;
-        } else {
-            new_lines.push(line.to_string());
-        }
-    }
-
-    if !found {
-        new_lines.push(format!("X-GNOME-Autostart-enabled={}", enable));
-    }
-
-    let new_content = new_lines.join("\n") + "\n";
-    fs::write(p, new_content).map_err(|e| format!("写入失败: {}", e))?;
-    Ok("状态已更新".to_string())
+    let user = platform::xdg_dir("XDG_CONFIG_HOME", ".config")
+        .ok_or("无法识别用户目录")?
+        .join("autostart");
+    let allowed = roots().into_iter().map(|(p, _)| p).collect::<Vec<_>>();
+    desktop::user_override(
+        Path::new(path),
+        &allowed,
+        &user,
+        &[
+            ("Hidden", if enable { "false" } else { "true" }),
+            (
+                "X-GNOME-Autostart-enabled",
+                if enable { "true" } else { "false" },
+            ),
+        ],
+    )?;
+    Ok("已通过用户配置更新登录启动状态".into())
 }

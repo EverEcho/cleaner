@@ -2,6 +2,7 @@
 import { ref, computed, onMounted } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
 import { ElMessage, ElMessageBox } from 'element-plus';
+import { Package } from 'lucide-vue-next';
 import PageHeader from '../layout/PageHeader.vue';
 import ScanningRadar from '../layout/ScanningRadar.vue';
 
@@ -20,6 +21,8 @@ interface AppItem {
   has_ui: boolean;
 }
 
+const failedIcons = ref(new Set<string>());
+function iconFailed(key: string) { failedIcons.value = new Set([...failedIcons.value, key]); }
 const scanning = ref(true);
 const apps = ref<AppItem[]>([]);
 const appSearch = ref('');
@@ -62,7 +65,7 @@ async function handleUninstallApp(app: AppItem) {
   try {
     const warningMsg = app.is_system
       ? `警告：[${app.name}] 属于系统重要组件！卸载可能导致依赖该组件的应用异常。确定仍要卸载吗？`
-      : `确定卸载应用程序 [${app.name}] (${app.pkg_type.toUpperCase()}) 吗？系统将自动清理其孤立依赖。`;
+      : `确定卸载应用程序 [${app.name}] (${app.pkg_type.toUpperCase()}) 吗？应用文档与配置不会自动删除。`;
 
     await ElMessageBox.confirm(warningMsg, '确认卸载应用', {
       confirmButtonText: '立即卸载',
@@ -85,7 +88,7 @@ onMounted(() => {
 
 <template>
   <div class="subpage-container">
-    <PageHeader title="应用强力卸载 (Lemon Uninstaller)">
+    <PageHeader title="应用卸载">
       <template #actions>
         <el-radio-group v-model="activeCategory" size="default">
           <el-radio-button value="user">
@@ -121,12 +124,15 @@ onMounted(() => {
 
       <div v-else class="table-container">
         <el-table :data="filteredApps" height="100%" stripe style="width: 100%">
-          <el-table-column label="应用名称" min-width="200">
+          <el-table-column label="应用名称" min-width="250">
             <template #default="{ row }">
+              <div class="app-identity">
+                <img v-if="row.icon.startsWith('data:image/') && !failedIcons.has(row.key)" :src="row.icon" alt="" class="app-icon" @error="iconFailed(row.key)" />
+                <span v-else class="app-icon app-icon-fallback"><Package :size="23" /></span>
               <div class="app-name-cell">
                 <span class="app-display-name">{{ row.name }}</span>
                 <span class="app-pkg-name">{{ row.key }}</span>
-              </div>
+              </div></div>
             </template>
           </el-table-column>
 
@@ -154,8 +160,8 @@ onMounted(() => {
 
           <el-table-column label="操作" width="100" fixed="right" align="center">
             <template #default="{ row }">
-              <el-button type="danger" link @click="handleUninstallApp(row)">
-                强力卸载
+              <el-button type="danger" :disabled="row.is_system" link @click="handleUninstallApp(row)">
+                卸载
               </el-button>
             </template>
           </el-table-column>
@@ -184,11 +190,16 @@ onMounted(() => {
   height: 100%;
 }
 
+.app-identity { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.app-icon { width: 36px; height: 36px; object-fit: contain; flex-shrink: 0; }
+.app-icon-fallback { display: grid; place-items: center; border-radius: 8px; background: #f0f8f5; color: #57b797; }
 .app-name-cell {
+  min-width: 0;
   display: flex;
   flex-direction: column;
 }
 
+.app-display-name, .app-pkg-name { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .app-display-name {
   font-weight: 500;
   color: #1f2937;

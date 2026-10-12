@@ -1,101 +1,37 @@
 #!/usr/bin/env bash
-# 软件管家 · 运行/管理入口脚本 (Tauri + Vue 3 版本)
+# Software Manager: common Linux / macOS development and run entry.
 set -euo pipefail
-
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BIN="$ROOT/src-tauri/target/release/tauri-app"
-
-ensure_bin() {
-    if [[ ! -f "$BIN" ]]; then
-        echo "未发现 release 二进制文件，正在自动构建..."
-        (cd "$ROOT" && pnpm tauri build --no-bundle)
-    fi
+cd "$ROOT"
+case "$(uname -s)" in Linux|Darwin) ;; *) echo '当前实现支持 Linux 和 macOS；Windows 尚在规划中。'; exit 1 ;; esac
+ensure_bin() { [[ -x "$BIN" ]] || pnpm tauri build --no-bundle; }
+run_direct() { ensure_bin; exec "$BIN" "$@"; }
+run_installed() {
+  "$ROOT/install.sh" "${1:-install}"
+  if [[ "$(uname -s)" == Darwin ]]; then exec open "$HOME/Applications/软件管家.app"; fi
+  run_direct
 }
-
-run_direct() {
-    echo ">> 直接启动软件管家..."
-    ensure_bin
-    exec "$BIN" "$@"
-}
-
-run_dev() {
-    echo ">> 启动开发模式 (Hot-Reload)..."
-    exec pnpm tauri dev
-}
-
-install_and_run() {
-    echo ">> 安装并启动软件管家..."
-    "$ROOT/install.sh" install
-    echo ">> 启动应用..."
-    exec "$BIN" "$@"
-}
-
-force_reinstall() {
-    echo ">> 强制重新安装桌面启动器..."
-    "$ROOT/install.sh" reinstall
-    echo ">> 启动应用..."
-    exec "$BIN" "$@"
-}
-
-show_menu() {
-    echo "======================================"
-    echo "   软件管家 (Tauri 2 + Vue 3 版)"
-    echo "======================================"
-    echo "1) 直接启动 (Release 二进制)"
-    echo "2) 安装后启动 (Install & Run)"
-    echo "3) 强制重新安装后启动 (Reinstall & Run)"
-    echo "4) 开发模式运行 (tauri dev 热重载)"
-    echo "5) 卸载桌面快捷方式 (Uninstall)"
-    echo "0) 退出 (Exit)"
-    echo "======================================"
-    read -rp "请选择操作 [1-5, 默认为 1]: " choice
-    choice="${choice:-1}"
-    case "$choice" in
-        1) run_direct ;;
-        2) install_and_run ;;
-        3) force_reinstall ;;
-        4) run_dev ;;
-        5) "$ROOT/install.sh" uninstall ;;
-        0) echo "已取消。"; exit 0 ;;
-        *) echo "无效选项: $choice"; exit 1 ;;
-    esac
-}
-
-action="${1:-}"
-
+action="${1:-menu}"
+[[ $# -eq 0 ]] || shift
 case "$action" in
-    run|direct|start)
-        shift || true
-        run_direct "$@"
-        ;;
-    dev)
-        shift || true
-        run_dev "$@"
-        ;;
-    install)
-        shift || true
-        install_and_run "$@"
-        ;;
-    reinstall|force)
-        shift || true
-        force_reinstall "$@"
-        ;;
-    uninstall)
-        "$ROOT/install.sh" uninstall
-        ;;
-    help|--help|-h)
-        echo "用法: $0 [选项]"
-        echo "选项:"
-        echo "  (无参数)      显示交互菜单选择操作"
-        echo "  run / direct  直接启动 release 编译的本地二进制"
-        echo "  dev           进入开发热重载模式 (pnpm tauri dev)"
-        echo "  install       安装系统桌面图标并启动"
-        echo "  reinstall     强制重新安装图标并启动"
-        echo "  uninstall     卸载已安装的桌面图标"
-        exit 0
-        ;;
-    *)
-        show_menu
-        ;;
+  run|direct|start) run_direct "$@" ;;
+  dev) exec pnpm tauri dev "$@" ;;
+  build) exec pnpm tauri build "$@" ;;
+  install) run_installed install ;;
+  reinstall|force) run_installed reinstall ;;
+  uninstall) exec "$ROOT/install.sh" uninstall ;;
+  authorize) exec "$ROOT/scripts/install-authorization.sh" "$@" ;;
+  menu)
+    echo '软件管家 · Linux / macOS'
+    echo '1) 直接运行  2) 安装并运行  3) 重新安装  4) 开发模式  5) 卸载入口  6) 配置会话授权缓存  0) 退出'
+    read -rp '请选择 [默认 1]: ' choice
+    case "${choice:-1}" in
+      1) run_direct ;; 2) run_installed install ;; 3) run_installed reinstall ;;
+      4) exec pnpm tauri dev ;; 5) exec "$ROOT/install.sh" uninstall ;;
+      6) exec "$ROOT/scripts/install-authorization.sh" ;; 0) exit 0 ;;
+      *) echo '无效选项'; exit 1 ;;
+    esac ;;
+  help|--help|-h) echo "用法: $0 [run|dev|build|install|reinstall|uninstall|authorize]" ;;
+  *) echo "未知操作: $action"; exit 1 ;;
 esac
-

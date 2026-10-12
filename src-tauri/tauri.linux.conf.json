@@ -1,0 +1,12 @@
+{
+  "bundle": {
+    "targets": [
+      "deb",
+      "rpm",
+      "appimage"
+    ],
+    "resources": {
+      "helper/target/release/appsteward-helper": "appsteward-helper"
+    }
+  }
+}

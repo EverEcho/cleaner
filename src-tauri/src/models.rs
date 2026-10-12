@@ -61,6 +61,18 @@ pub struct CleanItem {
     pub reason: String,
     pub can_delete: bool,
     pub selected: bool,
+    pub size_known: bool,
+    pub action: Option<String>,
+    pub details: Option<String>,
+    pub files: Vec<CleanFileDetail>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CleanFileDetail {
+    pub name: String,
+    pub path: String,
+    pub size_bytes: u64,
+    pub size_str: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -89,7 +101,6 @@ pub struct UpgradablePackage {
     pub arch: String,
     pub repository: String,
 }
-
 
 pub fn format_size(bytes: u64) -> String {
     const KB: u64 = 1024;

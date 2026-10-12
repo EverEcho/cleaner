@@ -1,0 +1,110 @@
+[
+  {
+    "id": "npm",
+    "name": "npm 下载缓存",
+    "home_paths": [
+      ".npm/_cacache"
+    ],
+    "cache_paths": [],
+    "description": "可重新下载的包缓存；离线安装能力会降低"
+  },
+  {
+    "id": "bun",
+    "name": "Bun 下载缓存",
+    "home_paths": [
+      ".bun/install/cache"
+    ],
+    "cache_paths": [],
+    "description": "可重新下载的依赖包；保留 Bun 程序、配置和锁文件"
+  },
+  {
+    "id": "yarn",
+    "name": "Yarn 下载缓存",
+    "home_paths": [],
+    "cache_paths": [
+      "yarn"
+    ],
+    "description": "历史包下载缓存；下次安装可能重新下载"
+  },
+  {
+    "id": "pip",
+    "name": "Python pip 缓存",
+    "home_paths": [],
+    "cache_paths": [
+      "pip"
+    ],
+    "description": "历史下载包和 wheel 缓存；不删除虚拟环境或已安装解释器"
+  },
+  {
+    "id": "go-build",
+    "name": "Go 编译缓存",
+    "home_paths": [],
+    "cache_paths": [
+      "go-build"
+    ],
+    "description": "可重新生成的编译结果；下次构建可能变慢"
+  },
+  {
+    "id": "ccache",
+    "name": "C/C++ 编译缓存",
+    "home_paths": [],
+    "cache_paths": [
+      "ccache"
+    ],
+    "description": "可重新生成的对象缓存；保留编译器和源码"
+  },
+  {
+    "id": "sccache",
+    "name": "Rust/C++ 共享编译缓存",
+    "home_paths": [],
+    "cache_paths": [
+      "sccache"
+    ],
+    "description": "历史编译缓存；下次构建可能变慢"
+  },
+  {
+    "id": "cargo-download",
+    "name": "Cargo crate 下载缓存",
+    "home_paths": [
+      ".cargo/registry/cache"
+    ],
+    "cache_paths": [],
+    "description": "下载的 crate 压缩包；保留 registry 源码、Rust 工具链、cargo/bin 与配置"
+  },
+  {
+    "id": "gradle",
+    "name": "Gradle 构建缓存",
+    "home_paths": [
+      ".gradle/caches"
+    ],
+    "cache_paths": [],
+    "description": "历史构建缓存；保留 wrapper、SDK、daemon 和配置"
+  },
+  {
+    "id": "maven-download",
+    "name": "Maven 下载缓存",
+    "home_paths": [
+      ".m2/repository"
+    ],
+    "cache_paths": [],
+    "description": "历史依赖下载；下次构建需要重新解析或下载"
+  },
+  {
+    "id": "xcode-derived",
+    "name": "Xcode DerivedData",
+    "home_paths": [
+      "Library/Developer/Xcode/DerivedData"
+    ],
+    "cache_paths": [],
+    "description": "历史构建与索引结果；保留 Archives、签名证书和工程源码"
+  },
+  {
+    "id": "cocoapods-cache",
+    "name": "CocoaPods 下载缓存",
+    "home_paths": [
+      "Library/Caches/CocoaPods"
+    ],
+    "cache_paths": [],
+    "description": "历史 Pod 下载缓存；保留项目 Pods、Podfile.lock 与仓库配置"
+  }
+]

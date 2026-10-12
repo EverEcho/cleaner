@@ -2,6 +2,7 @@
 import { ref, onMounted } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
 import { ElMessage } from 'element-plus';
+import { platformInfo } from '../platform';
 import PageHeader from '../layout/PageHeader.vue';
 
 const scanning = ref(false);
@@ -21,6 +22,7 @@ async function loadAutostart() {
 async function handleToggleAutostart(item: any) {
   try {
     await invoke('toggle_autostart_item', { path: item.path, enable: item.enabled });
+    await loadAutostart();
     ElMessage.success(`已${item.enabled ? '启用' : '禁用'}启动项: ${item.name}`);
   } catch (e: any) {
     item.enabled = !item.enabled;
@@ -42,6 +44,7 @@ onMounted(() => {
     </PageHeader>
 
     <div class="subpage-content">
+      <p class="platform-note">{{ platformInfo?.autostart_note }}</p>
       <el-table :data="autostartList" height="100%" stripe style="width: 100%" v-loading="scanning">
         <el-table-column prop="name" label="启动项名称" min-width="160" />
         <el-table-column prop="exec" label="执行命令" min-width="240" show-overflow-tooltip />
@@ -56,6 +59,7 @@ onMounted(() => {
           <template #default="{ row }">
             <el-switch
               v-model="row.enabled"
+              :disabled="platformInfo?.os === 'macos' && !row.is_user"
               active-color="#10b981"
               @change="handleToggleAutostart(row)"
             />

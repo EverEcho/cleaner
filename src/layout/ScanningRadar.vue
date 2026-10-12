@@ -20,11 +20,11 @@ const props = withDefaults(
 );
 
 const currentTipIndex = ref(0);
-let timer: any = null;
+let timer: ReturnType<typeof setInterval> | undefined;
 
 onMounted(() => {
   timer = setInterval(() => {
-    currentTipIndex.value = (currentTipIndex.value + 1) % props.tips.length;
+    currentTipIndex.value = (currentTipIndex.value + 1) % Math.max(1, props.tips.length);
   }, 2200);
 });
 
@@ -271,4 +271,5 @@ onUnmounted(() => {
     width: 30%;
   }
 }
+@media (prefers-reduced-motion: reduce) { .ripple, .scanner-sweep, .hex-badge-spin, .progress-bar-active { animation: none; } }
 </style>

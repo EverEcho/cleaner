@@ -1,6 +1,7 @@
-import { createRouter, createWebHistory } from 'vue-router';
+import { createRouter, createWebHashHistory } from 'vue-router';
 
 const routes = [
+  { path: '/storage', name: 'Storage', component: () => import('../views/StorageView.vue'), meta: { title: '磁盘空间分析' } },
   {
     path: '/',
     name: 'Dashboard',
@@ -52,7 +53,7 @@ const routes = [
 ];
 
 const router = createRouter({
-  history: createWebHistory(),
+  history: createWebHashHistory(),
   routes,
 });
 
