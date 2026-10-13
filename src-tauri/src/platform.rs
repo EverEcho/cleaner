@@ -25,9 +25,9 @@ pub fn info() -> PlatformInfo {
             "管理桌面应用的登录启动项；系统项通过用户配置覆盖。"
         },
         updates_note: if cfg!(target_os = "macos") {
-            "检测 Homebrew 管理的应用更新；App Store 和应用自带更新请在对应应用中操作。"
+            "检测 Homebrew、npm、uv/pipx 和规则库中的独立工具；App Store 使用系统更新。"
         } else {
-            "检测已安装包管理器中的可用更新。"
+            "检测系统包管理器、npm、uv/pipx 和规则库中的独立工具更新。"
         },
     }
 }

@@ -4,9 +4,10 @@ use crate::{
 };
 use std::process::Command;
 
-pub fn check_all_upgradable() -> Result<Vec<UpgradablePackage>, String> {
+pub fn check_with_warnings() -> (Vec<UpgradablePackage>, Vec<String>) {
     let mut list = Vec::new();
     let mut checked = false;
+    let mut warnings = Vec::new();
     let rpm_manager = if platform::command_path("dnf").is_some() {
         "dnf"
     } else {
@@ -42,26 +43,38 @@ pub fn check_all_upgradable() -> Result<Vec<UpgradablePackage>, String> {
             continue;
         };
         checked = true;
-        let output = Command::new(command)
+        let output = match Command::new(command)
             .args(args)
             .env("LANG", "C")
             .query_output()
-            .map_err(|e| format!("{binary} 查询失败: {e}"))?;
+        {
+            Ok(output) => output,
+            Err(error) => {
+                warnings.push(format!("{binary} 查询失败: {error}"));
+                continue;
+            }
+        };
         if !output.status.success() && output.status.code() != empty_code {
-            return Err(format!(
-                "{binary} 查询失败: {}",
-                String::from_utf8_lossy(&output.stderr).trim()
-            ));
+            warnings.push(format!("{binary} 查询失败，请检查网络、软件源或权限"));
+            continue;
         }
         list.extend(parse_updates(
             manager,
             &String::from_utf8_lossy(&output.stdout),
         ));
     }
-    if checked {
-        Ok(list)
+    if !checked {
+        warnings.push("未找到支持的系统软件源".into());
+    }
+    (list, warnings)
+}
+
+pub fn check_all_upgradable() -> Result<Vec<UpgradablePackage>, String> {
+    let (list, warnings) = check_with_warnings();
+    if list.is_empty() && !warnings.is_empty() {
+        Err(warnings.join("；"))
     } else {
-        Err("未找到支持的软件源；请使用应用自带更新功能".into())
+        Ok(list)
     }
 }
 

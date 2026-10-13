@@ -4,6 +4,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import PageHeader from '../layout/PageHeader.vue';
 import ScanningRadar from '../layout/ScanningRadar.vue';
+import { openUrl } from '@tauri-apps/plugin-opener';
 
 interface UpgradablePkg {
   name: string;
@@ -17,11 +18,33 @@ interface UpgradablePkg {
 import { platformInfo } from '../platform';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 
+const providerLabels: Record<string, string> = { 'github-release': '独立安装', 'github-branch': '源码安装', npm: 'npm', uv: 'uv', pipx: 'pipx' };
 const checking = ref(false);
 const refreshing = ref(false);
 const currentLog = ref('正在连接系统软件源并检索最新元数据…');
 const upgradingPkg = ref<string | null>(null);
+interface ToolUpdate { id: string; name: string; provider: string; current_version: string; latest_version: string; status: string; install_path: string; source_url: string; update_hint: string; note: string }
+interface UpdateReport { packages: UpgradablePkg[]; tools: ToolUpdate[]; warnings: string[] }
 const updates = ref<UpgradablePkg[]>([]);
+const tools = ref<ToolUpdate[]>([]);
+const warnings = ref<string[]>([]);
+const onlyAvailable = ref(false);
+const toolStatuses: Record<string, { label: string; type: 'success' | 'warning' | 'info' | 'danger' }> = {
+  'no-update': { label: '未发现更新', type: 'success' },
+  available: { label: '有更新', type: 'warning' }, current: { label: '已是最新', type: 'success' },
+  ahead: { label: '本地版本较新', type: 'info' }, unknown: { label: '需核对', type: 'info' }, failed: { label: '检测未完成', type: 'danger' },
+};
+const filteredTools = computed(() => tools.value.filter(tool => (!onlyAvailable.value || tool.status === 'available')
+  && (filterManager.value === 'all' || tool.provider === filterManager.value)
+  && (!search.value || `${tool.name} ${tool.install_path}`.toLowerCase().includes(search.value.toLowerCase()))));
+const availableCount = computed(() => updates.value.length + tools.value.filter(tool => tool.status === 'available').length);
+async function copyHint(tool: ToolUpdate) {
+  try { await navigator.clipboard.writeText(tool.update_hint); ElMessage.success('更新方式已复制，请在终端按原安装渠道执行'); }
+  catch { await ElMessageBox.alert(tool.update_hint, `${tool.name} 更新方式`, { confirmButtonText: '关闭' }); }
+}
+async function showSource(tool: ToolUpdate) {
+  try { await openUrl(tool.source_url); } catch (error) { ElMessage.error('打开软件源失败: ' + error); }
+}
 const search = ref('');
 const filterManager = ref('all');
 
@@ -31,7 +54,7 @@ let disposed = false;
 onUnmounted(() => { disposed = true; unlisten?.(); });
 
 const availableManagers = computed(() => {
-  const set = new Set(updates.value.map((u) => u.manager));
+  const set = new Set([...updates.value.map(u => u.manager), ...tools.value.map(tool => tool.provider)]);
   return Array.from(set);
 });
 
@@ -49,15 +72,14 @@ const filteredUpdates = computed(() => {
 async function checkUpdates() {
   checking.value = true;
   errorMessage.value = '';
-  currentLog.value = '正在跨包管理器检测可用更新…';
+  currentLog.value = '正在检查系统软件源、全局工具包和独立安装软件…';
   try {
-    const list: UpgradablePkg[] = await invoke('check_software_updates');
-    updates.value = list;
-    if (list.length === 0) {
-      ElMessage.success('当前软件源未发现可用更新');
-    } else {
-      ElMessage.info(`检测到 ${list.length} 个可更新的软件包`);
-    }
+    const report: UpdateReport = await invoke('check_software_updates');
+    updates.value = report.packages; tools.value = report.tools; warnings.value = report.warnings;
+    if (!availableManagers.value.includes(filterManager.value)) filterManager.value = 'all';
+    const incomplete = warnings.value.length || tools.value.some(tool => ['failed', 'unknown'].includes(tool.status));
+    if (incomplete) ElMessage.warning(`已检测到 ${availableCount.value} 项更新，部分渠道需要核对`);
+    else ElMessage.info(availableCount.value ? `检测到 ${availableCount.value} 项可用更新` : '已检查的安装渠道未发现更新');
   } catch (err: any) {
     errorMessage.value = String(err);
     ElMessage.error('检查更新失败: ' + err);
@@ -117,23 +139,23 @@ onMounted(() => {
       <template #actions>
         <el-input
           v-model="search"
-          placeholder="搜索待更新软件..."
+          placeholder="搜索软件或安装路径..."
           clearable
-          style="width: 220px"
+          style="width: 180px"
         />
         <el-select v-model="filterManager" style="width: 140px">
-          <el-option label="所有包管理器" value="all" />
+          <el-option label="所有安装渠道" value="all" />
           <el-option
             v-for="mgr in availableManagers"
             :key="mgr"
-            :label="mgr.toUpperCase()"
+            :label="providerLabels[mgr] ?? mgr.toUpperCase()"
             :value="mgr"
           />
         </el-select>
-        <el-button :loading="refreshing" @click="refreshSources">
+        <el-button :loading="refreshing" :disabled="checking || !!upgradingPkg" @click="refreshSources">
           刷新软件源
         </el-button>
-        <el-button type="primary" :loading="checking" @click="checkUpdates">
+        <el-button type="primary" :loading="checking" :disabled="refreshing || !!upgradingPkg" @click="checkUpdates">
           检查更新
         </el-button>
       </template>
@@ -142,25 +164,30 @@ onMounted(() => {
     <div class="subpage-content">
       <ScanningRadar
         v-if="checking || refreshing"
-        :title="refreshing ? '正在刷新系统软件源索引…' : '正在跨包管理器检测可用更新…'"
+        :title="refreshing ? '正在刷新系统软件源索引…' : '正在检测软件与工具更新…'"
         :sub-title="currentLog"
         :tips="[
-          '正在向各大镜像源拉取 Release / InRelease 签名索引…',
-          '正在检查并验证第三方存储库可用性…',
-          '正在计算本地已安装版本与仓库候选版本的更新拓扑…',
-          '正在排查安全漏洞修复包与关键补丁…',
+          '读取系统包管理器的候选版本…',
+          '检查 npm 全局包与 uv/pipx 安装的工具…',
+          '核对独立二进制与官方源码仓库…',
+          '网络不可用时保留其他已完成的检测结果…',
         ]"
       />
-      <div v-else-if="updates.length === 0" class="empty-status">
+      <div v-else-if="updates.length === 0 && tools.length === 0 && !warnings.length" class="empty-status">
         <el-icon :size="54" :color="errorMessage ? '#e6a23c' : '#00bd86'"><Warning v-if="errorMessage" /><CircleCheck v-else /></el-icon>
         <div class="empty-title">{{ errorMessage ? '检查更新未完成' : '当前软件源未发现可用更新' }}</div>
         <div class="empty-sub">{{ errorMessage || platformInfo?.updates_note }}</div>
       </div>
 
+      <template v-else-if="!checking && !refreshing">
+      <p class="update-summary">检测到 {{ availableCount }} 项更新 · 已识别 {{ tools.length }} 个全局或独立工具</p>
+      <el-alert v-if="errorMessage" :title="errorMessage" type="error" :closable="false" />
+      <details v-if="warnings.length" class="update-warnings"><summary>{{ warnings.length }} 个渠道检测未完成（查看原因）</summary><p v-for="warning in warnings" :key="warning">{{ warning }}</p></details>
+      <h3>系统软件包 <span>{{ updates.length }} 项可更新</span></h3>
+      <p v-if="!updates.length" class="update-note">{{ warnings.length ? '已完成检测的系统渠道未发现更新，未完成渠道见上方提示。' : '当前系统软件源未发现更新。' }}</p>
       <el-table
         v-else
         :data="filteredUpdates"
-        height="100%"
         stripe
         style="width: 100%"
       >
@@ -200,11 +227,32 @@ onMounted(() => {
           </template>
         </el-table-column>
       </el-table>
+      <div class="tool-heading"><h3>全局工具与独立软件 <span>{{ tools.length }} 项</span></h3><el-checkbox v-model="onlyAvailable">只看有更新</el-checkbox></div>
+      <p class="update-note">按安装渠道检测；独立工具提供更新方式，检测过程不安装软件。源码安装显示提交版本。</p>
+      <el-table :data="filteredTools" row-key="id" style="width: 100%">
+        <el-table-column type="expand"><template #default="{ row }"><div class="tool-details"><p><b>安装位置：</b>{{ row.install_path || '由工具管理器维护' }}</p><p v-if="row.note">{{ row.note }}</p><p><b>更新方式：</b><code>{{ row.update_hint }}</code></p><el-button size="small" @click="showSource(row)">查看官方来源</el-button></div></template></el-table-column>
+        <el-table-column prop="name" label="软件" min-width="165" show-overflow-tooltip />
+        <el-table-column label="安装渠道" min-width="110"><template #default="{ row }">{{ providerLabels[row.provider] ?? row.provider }}</template></el-table-column>
+        <el-table-column prop="current_version" label="当前版本 / 提交" min-width="150"><template #default="{ row }">{{ row.current_version || '无法确认' }}</template></el-table-column>
+        <el-table-column prop="latest_version" label="上游版本 / 提交" min-width="150"><template #default="{ row }">{{ row.latest_version || '未获取' }}</template></el-table-column>
+        <el-table-column label="状态" width="130"><template #default="{ row }"><el-tag :type="toolStatuses[row.status]?.type ?? 'info'" size="small">{{ toolStatuses[row.status]?.label ?? '需核对' }}</el-tag></template></el-table-column>
+        <el-table-column label="操作" width="125"><template #default="{ row }"><el-button size="small" @click="copyHint(row)">复制更新方式</el-button></template></el-table-column>
+      </el-table>
+      </template>
     </div>
   </div>
 </template>
 
 <style scoped>
+h3 { font-size: 14px; color: #4e555a; font-weight: 500; margin: 22px 0 12px; }
+h3 span, .update-note { color: #92989c; font-size: 12px; font-weight: 400; }
+.update-summary { font-size: 14px; color: #4e555a; }
+.update-warnings { font-size: 12px; color: #b58024; padding: 12px 0; }
+.update-warnings summary { cursor: pointer; }
+.tool-heading { display: flex; align-items: center; justify-content: space-between; }
+.tool-details { padding: 8px 24px; font-size: 12px; color: #798187; overflow-wrap: anywhere; }
+.tool-details code { color: #4e555a; user-select: text; }
+
 .subpage-container {
   display: flex;
   flex-direction: column;
@@ -215,7 +263,7 @@ onMounted(() => {
 .subpage-content {
   flex: 1;
   padding: 20px;
-  overflow: hidden;
+  overflow: auto;
 }
 
 .old-ver {

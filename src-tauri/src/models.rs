@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct AppInfo {
     pub key: String,
     pub name: String,
@@ -14,6 +14,9 @@ pub struct AppInfo {
     pub desktop_file: String,
     pub is_system: bool,
     pub has_ui: bool,
+    pub can_uninstall: bool,
+    pub install_path: String,
+    pub uninstall_note: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -41,6 +44,8 @@ pub struct DesktopEntryItem {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CleanCategory {
+    pub warning: Option<String>,
+    pub scan_summary: Option<String>,
     pub id: String,
     pub title: String,
     pub desc: String,
@@ -100,6 +105,27 @@ pub struct UpgradablePackage {
     pub new_version: String,
     pub arch: String,
     pub repository: String,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct SoftwareUpdateReport {
+    pub packages: Vec<UpgradablePackage>,
+    pub tools: Vec<ToolUpdate>,
+    pub warnings: Vec<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ToolUpdate {
+    pub id: String,
+    pub name: String,
+    pub provider: String,
+    pub current_version: String,
+    pub latest_version: String,
+    pub status: String,
+    pub install_path: String,
+    pub source_url: String,
+    pub update_hint: String,
+    pub note: String,
 }
 
 pub fn format_size(bytes: u64) -> String {

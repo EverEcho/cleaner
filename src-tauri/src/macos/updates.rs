@@ -38,6 +38,13 @@ pub fn check_all_upgradable() -> Result<Vec<UpgradablePackage>, String> {
     brew_json(&["outdated", "--json=v2"]).map(|v| parse_outdated(&v))
 }
 
+pub fn check_with_warnings() -> (Vec<UpgradablePackage>, Vec<String>) {
+    match check_all_upgradable() {
+        Ok(rows) => (rows, vec![]),
+        Err(error) => (vec![], vec![error]),
+    }
+}
+
 pub fn upgrade_package(manager: &str, name: &str) -> Result<String, String> {
     platform::validate_package_key(name)?;
     if !matches!(manager, "brew" | "brew-cask") {

@@ -1,55 +1,37 @@
 use crate::models::{AppInfo, format_size};
 use crate::platform::QueryCommand;
 use std::collections::{HashMap, HashSet};
-use std::fs;
+use std::path::PathBuf;
 use std::process::Command;
 
 pub fn list_installed_apps() -> Vec<AppInfo> {
     let mut apps = Vec::new();
 
-    // 1. 扫描系统 .desktop 桌面启动器，提取应用名称与图标
-    // 这是用户能感知到的“真实应用”的核心标识
-    let mut desktop_map: HashMap<String, (String, String, String)> = HashMap::new(); // path -> (name, icon, desktop_path)
-    let search_dirs = crate::desktop::application_dirs()
-        .into_iter()
-        .map(|(p, _)| p)
-        .collect::<Vec<_>>();
-
-    for dir_str in search_dirs {
-        let dir = dir_str.as_path();
-        if let Ok(entries) = fs::read_dir(dir) {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if path.extension().and_then(|s| s.to_str()) == Some("desktop")
-                    && let Ok(content) = fs::read_to_string(&path)
-                {
-                    let mut name = String::new();
-                    let mut icon = String::new();
-                    let mut no_display = false;
-
-                    for line in content.lines() {
-                        let line = line.trim();
-                        if line.starts_with("Name=") && name.is_empty() {
-                            name = line[5..].to_string();
-                        } else if line.starts_with("Icon=") && icon.is_empty() {
-                            icon = line[5..].to_string();
-                        } else if line == "NoDisplay=true" || line == "Hidden=true" {
-                            no_display = true;
-                        }
-                    }
-
-                    if !no_display && !name.is_empty() {
-                        let path_str = path.to_string_lossy().to_string();
-                        desktop_map.insert(path_str.clone(), (name, icon, path_str));
-                    }
-                }
+    let launchers = crate::manual_apps::launchers_in(&crate::manual_apps::launcher_roots());
+    let desktop_map: HashMap<String, (String, String, String)> = launchers
+        .iter()
+        .map(|launcher| {
+            let path = launcher.path.to_string_lossy().into_owned();
+            (
+                path.clone(),
+                (launcher.name.clone(), launcher.icon.clone(), path),
+            )
+        })
+        .collect();
+    let binaries: HashMap<PathBuf, Vec<&crate::manual_apps::Launcher>> = {
+        let mut map: HashMap<PathBuf, Vec<_>> = HashMap::new();
+        for launcher in &launchers {
+            if let Some(binary) = crate::manual_apps::executable(&launcher.exec) {
+                map.entry(binary).or_default().push(launcher);
             }
         }
-    }
-
+        map
+    };
+    let mut owned = HashSet::new();
     // 2. 将 .desktop 映射到归属的 deb 软件包 (通过 dpkg -S 批量解析)
     let mut deb_to_desktop: HashMap<String, (String, String, String)> = HashMap::new();
-    let desktop_paths: Vec<&str> = desktop_map.keys().map(|s| s.as_str()).collect();
+    let mut desktop_paths: Vec<PathBuf> = desktop_map.keys().map(PathBuf::from).collect();
+    desktop_paths.extend(binaries.keys().cloned());
 
     if !desktop_paths.is_empty()
         && let Ok(output) = Command::new("dpkg")
@@ -59,12 +41,40 @@ pub fn list_installed_apps() -> Vec<AppInfo> {
     {
         let stdout = String::from_utf8_lossy(&output.stdout);
         for line in stdout.lines() {
-            let parts: Vec<&str> = line.split(": ").collect();
-            if parts.len() == 2 {
-                let pkg_name = parts[0].trim().to_string();
-                let file_path = parts[1].trim();
-                if let Some(info) = desktop_map.get(file_path) {
-                    deb_to_desktop.insert(pkg_name, info.clone());
+            if let Some((owners, file_path)) = line.split_once(": ") {
+                let path = PathBuf::from(file_path.trim());
+                let matched: Vec<_> = launchers
+                    .iter()
+                    .filter(|launcher| {
+                        launcher.path == path
+                            || binaries.get(&path).is_some_and(|items| {
+                                items.iter().any(|item| item.path == launcher.path)
+                            })
+                    })
+                    .collect();
+                for launcher in matched {
+                    owned.insert(launcher.path.clone());
+                    for owner in owners.split(", ") {
+                        let pkg = owner.split(':').next().unwrap_or(owner).trim();
+                        if launcher.path == path {
+                            deb_to_desktop.insert(
+                                pkg.to_string(),
+                                (
+                                    launcher.name.clone(),
+                                    launcher.icon.clone(),
+                                    launcher.path.to_string_lossy().into_owned(),
+                                ),
+                            );
+                        } else {
+                            deb_to_desktop.entry(pkg.to_string()).or_insert_with(|| {
+                                (
+                                    launcher.name.clone(),
+                                    launcher.icon.clone(),
+                                    launcher.path.to_string_lossy().into_owned(),
+                                )
+                            });
+                        }
+                    }
                 }
             }
         }
@@ -137,6 +147,8 @@ pub fn list_installed_apps() -> Vec<AppInfo> {
                             desktop_file,
                             is_system,
                             has_ui: has_desktop,
+                            can_uninstall: !is_system,
+                            ..AppInfo::default()
                         });
                     }
                 }
@@ -180,6 +192,8 @@ pub fn list_installed_apps() -> Vec<AppInfo> {
                     desktop_file: "".to_string(),
                     is_system: false,
                     has_ui: true,
+                    can_uninstall: true,
+                    ..AppInfo::default()
                 });
             }
         }
@@ -211,6 +225,8 @@ pub fn list_installed_apps() -> Vec<AppInfo> {
                     desktop_file: "".to_string(),
                     is_system: false,
                     has_ui: true,
+                    can_uninstall: true,
+                    ..AppInfo::default()
                 });
             }
         }
@@ -243,6 +259,7 @@ pub fn list_installed_apps() -> Vec<AppInfo> {
             if !output.status.success() {
                 continue;
             }
+            owned.insert(PathBuf::from(path));
             let text = String::from_utf8_lossy(&output.stdout);
             let fields: Vec<_> = text.trim().split('\t').collect();
             let Some(key) = fields.first().filter(|k| !k.is_empty()) else {
@@ -272,9 +289,26 @@ pub fn list_installed_apps() -> Vec<AppInfo> {
                 desktop_file: desktop_file.clone(),
                 is_system: false,
                 has_ui: true,
+                can_uninstall: true,
+                ..AppInfo::default()
             });
         }
     }
+
+    let represented = apps
+        .iter()
+        .filter_map(|app| {
+            launchers
+                .iter()
+                .find(|launcher| launcher.path == std::path::Path::new(&app.desktop_file))
+        })
+        .filter_map(|launcher| crate::manual_apps::executable(&launcher.exec))
+        .collect();
+    apps.extend(crate::manual_apps::discover(
+        &launchers,
+        &owned,
+        &represented,
+    ));
 
     // 排序：有图形界面的排在前面，再按名称字母升序
     apps.sort_by(|a, b| {
@@ -288,6 +322,9 @@ pub fn list_installed_apps() -> Vec<AppInfo> {
 }
 
 pub fn uninstall_package(pkg_type: &str, key: &str) -> Result<String, String> {
+    if pkg_type == "manual" {
+        return Err("独立安装应用需要先查看卸载详情，再确认移入废纸篓".into());
+    }
     crate::platform::validate_package_key(key)?;
     if !list_installed_apps()
         .iter()

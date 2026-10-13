@@ -18,6 +18,7 @@ struct JunkReceipt {
     paths: HashSet<PathBuf>,
     actions: HashMap<String, String>,
     developer: HashMap<PathBuf, (u64, String)>,
+    developer_groups: HashMap<String, Vec<crate::models::CleanFileDetail>>,
 }
 static SCANNED_JUNK: LazyLock<Mutex<JunkReceipt>> =
     LazyLock::new(|| Mutex::new(JunkReceipt::default()));
@@ -109,6 +110,8 @@ fn category(id: &str, title: &str, desc: &str, mut items: Vec<CleanItem>) -> Cle
     let total_size_bytes = items.iter().map(|i| i.size_bytes).sum();
     let unknown = items.iter().any(|i| !i.size_known);
     CleanCategory {
+        warning: None,
+        scan_summary: None,
         id: id.into(),
         title: title.into(),
         desc: desc.into(),
@@ -215,7 +218,7 @@ pub fn scan_system_junk_with_progress(mut report: impl FnMut(&str, u64)) -> Vec<
         "开发工具历史缓存",
         categories.iter().map(|c| c.total_size_bytes).sum(),
     );
-    let developer_category = build_developer_category(None, 7).unwrap_or_else(|error| {
+    let developer_category = build_developer_category(None, 7, |_| {}).unwrap_or_else(|error| {
         let mut failed = category(
             "developer",
             "开发者垃圾",
@@ -238,9 +241,10 @@ pub fn scan_system_junk_with_progress(mut report: impl FnMut(&str, u64)) -> Vec<
         });
         failed.count = 1;
         failed.total_size_str = "扫描未完成".into();
-        (failed, HashMap::new())
+        (failed, HashMap::new(), HashMap::new())
     });
     let developer_receipt = developer_category.1;
+    let developer_groups = developer_category.2;
     categories.push(developer_category.0);
     report(
         "系统安装包、历史日志、过期临时文件与容器垃圾",
@@ -251,15 +255,17 @@ pub fn scan_system_junk_with_progress(mut report: impl FnMut(&str, u64)) -> Vec<
         "扫描完成",
         categories.iter().map(|c| c.total_size_bytes).sum(),
     );
-    let allowed = categories
+    let mut allowed: HashSet<PathBuf> = categories
         .iter()
         .flat_map(|c| &c.items)
         .filter(|i| i.can_delete && i.action.is_none())
         .filter_map(|i| fs::canonicalize(&i.path).ok())
         .collect();
+    allowed.extend(developer_receipt.keys().cloned());
     if let Ok(mut receipt) = SCANNED_JUNK.lock() {
         receipt.paths = allowed;
         receipt.developer = developer_receipt;
+        receipt.developer_groups = developer_groups;
         receipt.actions = categories
             .iter()
             .flat_map(|c| &c.items)
@@ -612,8 +618,9 @@ fn validated_cleanup_paths(
 
 pub fn delete_clean_items(paths: Vec<String>) -> Result<usize, String> {
     let receipt = SCANNED_JUNK.lock().map_err(|e| e.to_string())?;
+    let expanded = expand_developer_groups(&paths, &receipt.developer_groups)?;
     let (actions, files): (Vec<_>, Vec<_>) =
-        paths.into_iter().partition(|p| p.starts_with("system:"));
+        expanded.into_iter().partition(|p| p.starts_with("system:"));
     let ids: HashSet<_> = actions
         .iter()
         .map(|p| p.strip_prefix("system:").unwrap_or_default().to_string())
@@ -650,8 +657,15 @@ pub fn delete_clean_items(paths: Vec<String>) -> Result<usize, String> {
 }
 
 pub fn clean_item_details(path: &str) -> Result<Vec<crate::models::CleanFileDetail>, String> {
-    let canonical = fs::canonicalize(path).map_err(|e| e.to_string())?;
     let receipt = SCANNED_JUNK.lock().map_err(|e| e.to_string())?;
+    if path.starts_with("developer:group:") {
+        return receipt
+            .developer_groups
+            .get(path)
+            .cloned()
+            .ok_or("该清理分类已失效，请重新扫描".into());
+    }
+    let canonical = fs::canonicalize(path).map_err(|e| e.to_string())?;
     if !receipt.paths.contains(&canonical) {
         return Err("该目录不在当前扫描结果中".into());
     }
@@ -696,7 +710,7 @@ fn compute_file_sha256(path: &Path) -> Result<String, std::io::Error> {
     Ok(hex::encode(hasher.finalize()))
 }
 
-fn get_dir_or_file_size(path: &Path) -> Result<u64, String> {
+pub(crate) fn get_dir_or_file_size(path: &Path) -> Result<u64, String> {
     let mut total = 0u64;
     for entry in WalkDir::new(path) {
         let entry = entry.map_err(|e| e.to_string())?;
@@ -708,52 +722,129 @@ fn get_dir_or_file_size(path: &Path) -> Result<u64, String> {
 }
 
 type DeveloperReceipt = HashMap<PathBuf, (u64, String)>;
-fn build_developer_category(
-    root: Option<&str>,
+type DeveloperGroups = HashMap<String, Vec<crate::models::CleanFileDetail>>;
+fn expand_developer_groups(
+    paths: &[String],
+    groups: &DeveloperGroups,
+) -> Result<Vec<String>, String> {
+    let mut expanded = Vec::new();
+    for path in paths {
+        if path.starts_with("developer:group:") {
+            let files = groups.get(path).ok_or("开发者清理分类已失效，请重新扫描")?;
+            expanded.extend(files.iter().map(|file| file.path.clone()));
+        } else {
+            expanded.push(path.clone());
+        }
+    }
+    Ok(expanded)
+}
+fn developer_items(
+    targets: Vec<crate::developer::DevTarget>,
     days: u64,
-) -> Result<(CleanCategory, DeveloperReceipt), String> {
-    let home = platform::home().ok_or("无法找到用户目录")?;
-    let cache = cache_root().ok_or("无法找到缓存目录")?;
-    let targets = crate::developer::scan(&home, &cache, root.map(Path::new), days)?;
+) -> (Vec<CleanItem>, DeveloperReceipt, DeveloperGroups) {
     let mut items = Vec::new();
     let mut receipt = HashMap::new();
+    let mut groups = HashMap::new();
     for target in targets {
-        if let Some(mut entry) = item(
-            &target.path,
-            &format!("{}；至少 {days} 天未修改或访问", target.reason),
-            false,
-        ) {
-            entry.name = format!(
+        if target.size_bytes == 0 {
+            continue;
+        }
+        let path = target.path.to_string_lossy().into_owned();
+        receipt.insert(target.path.clone(), (days, target.fingerprint));
+        items.push(CleanItem {
+            id: path.clone(),
+            path,
+            name: target.name,
+            size_bytes: target.size_bytes,
+            size_str: format_size(target.size_bytes),
+            reason: format!("{}；至少 {days} 天未修改或访问", target.reason),
+            can_delete: true,
+            selected: false,
+            size_known: true,
+            action: None,
+            details: None,
+            files: Vec::new(),
+        });
+    }
+    if items.len() > 200 {
+        let mut by_name: HashMap<String, Vec<CleanItem>> = HashMap::new();
+        for item in items {
+            by_name.entry(item.name.clone()).or_default().push(item);
+        }
+        items = Vec::new();
+        for (name, targets) in by_name {
+            let mut files: Vec<_> = targets
+                .iter()
+                .map(|target| crate::models::CleanFileDetail {
+                    name: Path::new(&target.path)
+                        .parent()
+                        .and_then(Path::file_name)
+                        .unwrap_or_default()
+                        .to_string_lossy()
+                        .into_owned(),
+                    path: target.path.clone(),
+                    size_bytes: target.size_bytes,
+                    size_str: target.size_str.clone(),
+                })
+                .collect();
+            files.sort_by_key(|file| std::cmp::Reverse(file.size_bytes));
+            let key = format!(
+                "developer:group:{}",
+                hex::encode(Sha256::digest(
+                    serde_json::to_vec(&files).unwrap_or_default()
+                ))
+            );
+            let bytes = files.iter().map(|file| file.size_bytes).sum();
+            let count = files.len();
+            items.push(CleanItem{id:key.clone(),path:key.clone(),name:format!("{name}（{count} 项）"),size_bytes:bytes,size_str:format_size(bytes),reason:targets[0].reason.clone(),can_delete:true,selected:false,size_known:true,action:None,details:Some(format!("共 {count} 个已统计的文件或目录。勾选此分类会清理全部条目；展开后可单独选择文件。保留源码、锁文件和工具链。")),files:Vec::new()});
+            groups.insert(key, files);
+        }
+    } else {
+        for item in &mut items {
+            item.name = format!(
                 "{} · {}",
-                target.name,
-                target
-                    .path
+                item.name,
+                Path::new(&item.path)
                     .file_name()
                     .unwrap_or_default()
                     .to_string_lossy()
             );
-            if entry.can_delete {
-                receipt.insert(
-                    target.path.clone(),
-                    (days, crate::developer::fingerprint(&target.path)?),
-                );
-            }
-            items.push(entry);
         }
     }
-    Ok((
-        category(
-            "developer",
-            "开发者垃圾",
-            "历史包缓存和可重新生成的项目产物",
-            items,
-        ),
-        receipt,
-    ))
+    (items, receipt, groups)
+}
+fn build_developer_category(
+    root: Option<&str>,
+    days: u64,
+    report: impl FnMut(crate::developer::DevProgress),
+) -> Result<(CleanCategory, DeveloperReceipt, DeveloperGroups), String> {
+    let home = platform::home().ok_or("无法找到用户目录")?;
+    let cache = cache_root().ok_or("无法找到缓存目录")?;
+    let scan =
+        crate::developer::scan_with_progress(&home, &cache, root.map(Path::new), days, report)?;
+    let (items, receipt, groups) = developer_items(scan.targets, days);
+    let count = receipt.len();
+    let mut result = category(
+        "developer",
+        "开发者垃圾",
+        "历史包缓存和可重新生成的项目产物",
+        items,
+    );
+    result.count = count;
+    result.warning = (!scan.warnings.is_empty()).then(|| scan.warnings.join("\n"));
+    result.scan_summary = Some(format!(
+        "已检查 {} 个目录，识别 {} 个候选项目目录，跳过 {} 个服务数据目录",
+        scan.directories_scanned, scan.projects_found, scan.storage_skipped
+    ));
+    Ok((result, receipt, groups))
 }
 
-pub fn scan_developer_junk(root: Option<&str>, days: u64) -> Result<CleanCategory, String> {
-    let (category, developer) = build_developer_category(root, days)?;
+pub fn scan_developer_junk(
+    root: Option<&str>,
+    days: u64,
+    report: impl FnMut(crate::developer::DevProgress),
+) -> Result<CleanCategory, String> {
+    let (category, developer, groups) = build_developer_category(root, days, report)?;
     let mut receipt = SCANNED_JUNK.lock().map_err(|e| e.to_string())?;
     let old: Vec<_> = receipt.developer.keys().cloned().collect();
     for path in old {
@@ -761,12 +852,40 @@ pub fn scan_developer_junk(root: Option<&str>, days: u64) -> Result<CleanCategor
     }
     receipt.paths.extend(developer.keys().cloned());
     receipt.developer = developer;
+    receipt.developer_groups = groups;
     Ok(category)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn grouped_developer_results_keep_exact_sizes_paths_and_do_not_accept_unknown_groups() {
+        let targets = (0..201)
+            .map(|index| crate::developer::DevTarget {
+                name: "Python 字节码缓存".into(),
+                path: PathBuf::from(format!("/tmp/projects/project-{index}/__pycache__")),
+                reason: "generated".into(),
+                size_bytes: 10,
+                fingerprint: format!("hash-{index}"),
+            })
+            .collect();
+        let (items, receipt, groups) = developer_items(targets, 7);
+        assert_eq!(items.len(), 1);
+        assert_eq!(receipt.len(), 201);
+        assert_eq!(items[0].size_bytes, 2010);
+        assert!(items[0].files.is_empty());
+        let paths = expand_developer_groups(&[items[0].path.clone()], &groups).unwrap();
+        assert_eq!(paths.len(), 201);
+        assert!(
+            paths
+                .iter()
+                .all(|path| receipt.contains_key(Path::new(path)))
+        );
+        assert!(expand_developer_groups(&["developer:group:unscanned".into()], &groups).is_err());
+        let single = expand_developer_groups(&[paths[0].clone()], &groups).unwrap();
+        assert_eq!(single, vec![paths[0].clone()]);
+    }
     #[test]
     fn system_cleanup_rejects_unscanned_and_diagnostic_actions() {
         assert!(delete_clean_items(vec!["system:docker-usage".into()]).is_err());

@@ -11,7 +11,7 @@ import LemonMark from '../layout/LemonMark.vue';
 
 interface FileDetail { name: string; path: string; size_bytes: number; size_str: string }
 interface CleanItem { id: string; path: string; name: string; size_bytes: number; size_str: string; reason: string; can_delete: boolean; selected: boolean; size_known: boolean; action?: string; details?: string; files: FileDetail[] }
-interface CleanCategory { id: string; title: string; desc: string; total_size_bytes: number; total_size_str: string; count: number; items: CleanItem[] }
+interface CleanCategory { warning?: string; scan_summary?: string; id: string; title: string; desc: string; total_size_bytes: number; total_size_str: string; count: number; items: CleanItem[] }
 const router = useRouter();
 const scanning = ref(true);
 const cleaning = ref(false);
@@ -22,22 +22,27 @@ const developerScanning = ref(false);
 const developerRoot = ref('');
 const developerRoots = ref<string[]>([]);
 const developerDays = ref(7);
+const developerProgress = ref({ path: '', directories_scanned: 0, projects_found: 0 });
+const developerWarnings = computed(() => categories.value.filter(category => category.id === 'developer' && category.warning));
+let unlistenDeveloper: UnlistenFn | undefined;
 async function openDeveloper() {
   developerDialog.value = true;
   try { developerRoots.value = await invoke<string[]>('get_developer_roots'); } catch {}
 }
 async function scanDeveloper() {
   developerScanning.value = true;
+  developerProgress.value = { path: '准备扫描工具缓存与项目目录…', directories_scanned: 0, projects_found: 0 };
   try {
     const category = await invoke<CleanCategory>('scan_developer_junk', { root: developerRoot.value.trim() || null, minAgeDays: developerDays.value });
-    const previous = new Set(categories.value.filter(cat => cat.id === 'developer').flatMap(cat => cat.items.map(item => item.path)));
+    const previous = new Set(categories.value.filter(cat => cat.id === 'developer').flatMap(cat => cat.items.flatMap(item => [item.path, ...item.files.map(file => file.path)])));
     selected.value = selected.value.filter(path => !previous.has(path));
     categories.value = [...categories.value.filter(cat => cat.id !== 'developer'), category];
     loadedDetails.value = new Set();
     expandedItems.value = new Set();
     expandedGroups.value = new Set([...expandedGroups.value, 'developer']);
     developerDialog.value = false;
-    ElMessage.success(`已统计 ${category.count} 项开发者垃圾，请查看详情后勾选清理`);
+    if (category.warning) ElMessage.warning('部分目录未覆盖，已保留扫描结果；请查看列表提示');
+    else ElMessage.success(`已统计 ${category.count} 项开发者垃圾，请查看详情后勾选清理`);
   } catch (error) { ElMessage.error('开发者扫描失败: ' + error); }
   finally { developerScanning.value = false; }
 }
@@ -46,6 +51,25 @@ const expandedGroups = ref(new Set(['system','applications','browser','docker','
 const expandedItems = ref(new Set<string>());
 const loadingDetails = ref(new Set<string>());
 const loadedDetails = ref(new Set<string>());
+const detailLimits = ref<Record<string, number>>({});
+function isDeveloperGroup(item: CleanItem) { return item.path.startsWith('developer:group:'); }
+function itemChecked(item: CleanItem) { return selectedSet.value.has(item.path) || isDeveloperGroup(item) && item.files.length > 0 && item.files.every(file => selectedSet.value.has(file.path)); }
+function itemPartial(item: CleanItem) { return isDeveloperGroup(item) && !itemChecked(item) && item.files.some(file => selectedSet.value.has(file.path)); }
+function itemSelectedBytes(item: CleanItem) {
+  if (selectedSet.value.has(item.path)) return item.size_bytes;
+  return isDeveloperGroup(item) ? item.files.filter(file => selectedSet.value.has(file.path)).reduce((sum,file) => sum + file.size_bytes,0) : 0;
+}
+function visibleFiles(item: CleanItem) { return item.files.slice(0, detailLimits.value[item.id] ?? 100); }
+function moreDetails(item: CleanItem) { detailLimits.value = { ...detailLimits.value, [item.id]: (detailLimits.value[item.id] ?? 100) + 100 }; }
+function fileSelected(item: CleanItem, file: FileDetail) { return selectedSet.value.has(item.path) || selectedSet.value.has(file.path); }
+function toggleDeveloperFile(item: CleanItem, file: FileDetail) {
+  const set = new Set(selected.value);
+  const checked = fileSelected(item,file);
+  if (set.delete(item.path)) for (const child of item.files) set.add(child.path);
+  if (checked) set.delete(file.path); else set.add(file.path);
+  if (item.files.every(child => set.has(child.path))) { for (const child of item.files) set.delete(child.path); set.add(item.path); }
+  selected.value = [...set];
+}
 const scanPath = ref('准备扫描…');
 const discoveredBytes = ref(0);
 const scanError = ref('');
@@ -60,23 +84,26 @@ const groups = computed(() => [
   { id: 'docker', title: '容器垃圾', icon: Container, cats: ['docker'] },
 ].map(group => ({ ...group, items: categories.value.filter(cat => group.cats.includes(cat.id)).flatMap(cat => cat.items) })).filter(group => group.items.length > 0 || (!scanning.value && !scanError.value && group.id === 'applications')));
 const totalBytes = computed(() => categories.value.reduce((sum, cat) => sum + cat.total_size_bytes, 0));
-const selectedBytes = computed(() => categories.value.flatMap(cat => cat.items).filter(item => selectedSet.value.has(item.path)).reduce((sum, item) => sum + item.size_bytes, 0));
-const hasScanFailures = computed(() => categories.value.some(cat => cat.items.some(item => !item.size_known)));
+const selectedBytes = computed(() => categories.value.flatMap(cat => cat.items).reduce((sum, item) => sum + itemSelectedBytes(item), 0));
+const hasScanFailures = computed(() => categories.value.some(cat => cat.warning || cat.items.some(item => !item.size_known)));
 const allItems = computed(() => categories.value.flatMap(cat => cat.items).filter(item => item.can_delete));
-const allSelected = computed(() => allItems.value.length > 0 && allItems.value.every(item => selectedSet.value.has(item.path)));
+const allSelected = computed(() => allItems.value.length > 0 && allItems.value.every(itemChecked));
 function size(bytes: number) {
   if (bytes >= 1024 ** 3) return (bytes / 1024 ** 3).toFixed(2) + ' GB';
   if (bytes >= 1024 ** 2) return (bytes / 1024 ** 2).toFixed(1) + ' MB';
   if (bytes >= 1024) return (bytes / 1024).toFixed(1) + ' KB';
   return bytes + ' B';
 }
-function groupBytes(items: CleanItem[], onlySelected = false) { return items.filter(item => !onlySelected || selectedSet.value.has(item.path)).reduce((sum,item) => sum + item.size_bytes,0); }
-function groupChecked(items: CleanItem[]) { const eligible = items.filter(item => item.can_delete); return eligible.length > 0 && eligible.every(item => selectedSet.value.has(item.path)); }
-function groupPartial(items: CleanItem[]) { return !groupChecked(items) && items.some(item => selectedSet.value.has(item.path)); }
+function groupBytes(items: CleanItem[], onlySelected = false) { return items.reduce((sum,item) => sum + (onlySelected ? itemSelectedBytes(item) : item.size_bytes),0); }
+function groupChecked(items: CleanItem[]) { const eligible = items.filter(item => item.can_delete); return eligible.length > 0 && eligible.every(itemChecked); }
+function groupPartial(items: CleanItem[]) { return !groupChecked(items) && items.some(item => itemChecked(item) || itemPartial(item)); }
 function toggleSelection(items: CleanItem[]) {
   const set = new Set(selected.value);
   const remove = groupChecked(items);
-  for (const item of items.filter(item => item.can_delete)) { if (remove) set.delete(item.path); else set.add(item.path); }
+  for (const item of items.filter(item => item.can_delete)) {
+    if (remove) set.delete(item.path); else set.add(item.path);
+    if (isDeveloperGroup(item)) for (const file of item.files) set.delete(file.path);
+  }
   selected.value = [...set];
 }
 function toggleAll() { selected.value = allSelected.value ? [] : allItems.value.map(item => item.path); }
@@ -110,7 +137,7 @@ async function authorize() {
 async function scan() {
   if (cleaning.value) return;
   scanning.value = true; scanError.value = ''; scanPath.value = '准备扫描…'; discoveredBytes.value = 0;
-  categories.value = []; selected.value = []; expandedItems.value = new Set(); loadedDetails.value = new Set();
+  categories.value = []; selected.value = []; expandedItems.value = new Set(); loadedDetails.value = new Set(); detailLimits.value = {};
   try {
     categories.value = await invoke<CleanCategory[]>('scan_junk');
     selected.value = categories.value.flatMap(cat => cat.items).filter(item => item.can_delete && item.selected).map(item => item.path);
@@ -134,10 +161,12 @@ onMounted(async () => {
   if (isTauri()) { try {
     const stop = await listen<{path: string; total_size_bytes: number}>('scan-progress', event => { scanPath.value = event.payload.path; discoveredBytes.value = event.payload.total_size_bytes; });
     if (disposed) { stop(); return; } unlisten = stop;
+    const developerStop = await listen<{path: string; directories_scanned: number; projects_found: number}>('developer-scan-progress', event => { developerProgress.value = event.payload; });
+    if (disposed) { developerStop(); return; } unlistenDeveloper = developerStop;
   } catch {} }
   await scan();
 });
-onUnmounted(() => { disposed = true; unlisten?.(); });
+onUnmounted(() => { disposed = true; unlisten?.(); unlistenDeveloper?.(); });
 </script>
 
 <template>
@@ -154,6 +183,7 @@ onUnmounted(() => { disposed = true; unlisten?.(); });
     <div class="list-toolbar"><el-checkbox :model-value="allSelected" :disabled="scanning || cleaning || !allItems.length" @change="toggleAll">全部选择</el-checkbox><button class="quiet-button" :disabled="scanning || cleaning || authorizing || developerScanning" @click="scan">重新扫描</button><button class="quiet-button" :disabled="scanning || cleaning || authorizing || developerScanning" @click="openDeveloper">开发者深度扫描</button><button class="authorization-button" :disabled="scanning || cleaning || authorizing || developerScanning" @click="authorize">{{ authorizing ? '正在授权…' : '管理员授权' }}</button></div>
     <div class="clean-list" :aria-busy="scanning">
       <el-alert v-if="scanError" title="扫描未完成" :description="scanError" type="error" :closable="false" />
+      <details v-for="category in developerWarnings" :key="category.id" class="developer-warning"><summary>开发者扫描已保留部分结果 · 查看未覆盖目录</summary><p>{{ category.scan_summary }}</p><p>{{ category.warning }}</p></details>
       <div v-if="scanning && !groups.length" class="scan-placeholder">正在逐项扫描文件与清理规则，请稍候…</div>
       <section v-for="group in groups" :key="group.id" class="clean-group">
         <button class="group-heading" @click="toggleGroup(group.id)"><component :is="group.icon" :size="18" /><strong>{{ group.title }}</strong><span>共 {{ size(groupBytes(group.items)) }}，已选择 <b>{{ size(groupBytes(group.items, true)) }}</b></span><span v-if="!group.items.length" class="clean-status">很干净</span><ChevronUp v-if="expandedGroups.has(group.id)" :size="16" class="heading-chevron" /><ChevronDown v-else :size="16" class="heading-chevron" /></button>
@@ -161,7 +191,7 @@ onUnmounted(() => { disposed = true; unlisten?.(); });
           <div v-if="group.items.length" class="group-select"><el-checkbox :model-value="groupChecked(group.items)" :indeterminate="groupPartial(group.items)" :disabled="!group.items.some(item => item.can_delete) || cleaning" @change="toggleSelection(group.items)">选择此分类</el-checkbox></div>
           <div v-for="item in group.items" :key="item.id" class="item-block">
             <div class="clean-row" :class="{ 'row-expanded': expandedItems.has(item.id) }">
-              <el-checkbox :model-value="selectedSet.has(item.path)" :disabled="!item.can_delete || cleaning" :aria-label="item.name" @change="toggleSelection([item])" />
+              <el-checkbox :model-value="itemChecked(item)" :indeterminate="itemPartial(item)" :disabled="!item.can_delete || cleaning" :aria-label="item.name" @change="toggleSelection([item])" />
               <button class="item-name" :title="item.name" @click="toggleDetails(item)">{{ item.name }}</button>
               <span class="item-description" :title="item.reason">{{ item.reason }}</span>
               <button class="item-stat" :class="{ 'clean-status': item.size_known && !item.size_bytes && !item.files.length, 'failed-status': !item.size_known }" @click="toggleDetails(item)">{{ !item.size_known ? '扫描未完成' : item.size_bytes || item.files.length ? item.size_str : '很干净' }}</button>
@@ -170,7 +200,8 @@ onUnmounted(() => { disposed = true; unlisten?.(); });
             <div v-if="expandedItems.has(item.id)" class="item-details">
               <p v-if="item.details" class="detail-note">{{ item.details }}</p><p v-else class="detail-note">{{ item.path }}</p>
               <p v-if="loadingDetails.has(item.id)" class="detail-note">正在读取文件详情…</p>
-              <div v-for="file in item.files" :key="file.path" class="file-row"><File v-if="file.path.startsWith('docker:')" :size="16" /><Folder v-else :size="16" /><span class="file-name" :title="file.name">{{ file.name }}</span><span class="file-path" :title="file.path">{{ file.path }}</span><button v-if="!file.path.startsWith('docker:')" class="reveal-button" title="查看文件位置" @click="reveal(file)"><Search :size="14" /></button><span class="file-size">{{ file.size_str }}</span></div>
+              <div v-for="file in visibleFiles(item)" :key="file.path" class="file-row"><el-checkbox v-if="isDeveloperGroup(item)" :model-value="fileSelected(item, file)" :disabled="cleaning" :aria-label="file.path" @change="toggleDeveloperFile(item,file)" /><File v-if="file.path.startsWith('docker:')" :size="16" /><Folder v-else :size="16" /><span class="file-name" :title="file.name">{{ file.name }}</span><span class="file-path" :title="file.path">{{ file.path }}</span><button v-if="!file.path.startsWith('docker:')" class="reveal-button" title="查看文件位置" @click="reveal(file)"><Search :size="14" /></button><span class="file-size">{{ file.size_str }}</span></div>
+              <button v-if="item.files.length > visibleFiles(item).length" class="quiet-button more-details" @click="moreDetails(item)">继续显示 100 项（{{ visibleFiles(item).length }} / {{ item.files.length }}）</button>
               <p v-if="!loadingDetails.has(item.id) && !item.files.length && item.size_known" class="detail-note">没有符合此清理规则的文件。</p>
             </div>
           </div>
@@ -185,12 +216,18 @@ onUnmounted(() => { disposed = true; unlisten?.(); });
         <el-form-item label="保留最近使用或修改的文件"><el-select v-model="developerDays" :disabled="developerScanning"><el-option v-for="days in [1,7,30,90]" :key="days" :label="`${days} 天`" :value="days" /></el-select></el-form-item>
       </el-form>
       <p class="developer-note">识别 Node.js、Rust、Maven、Gradle、Flutter、.NET、Python 项目。保留源码、锁文件、SDK、虚拟环境和配置；清理后可能需要重新下载依赖或构建。</p>
+      <div v-if="developerScanning" class="developer-scan-state"><el-progress :percentage="100" :indeterminate="true" :show-text="false" /><p>已检查 {{ developerProgress.directories_scanned }} 个目录，识别 {{ developerProgress.projects_found }} 个候选项目目录</p><p class="scan-path" :title="developerProgress.path">{{ developerProgress.path }}</p></div>
       <template #footer><el-button :disabled="developerScanning" @click="developerDialog = false">取消</el-button><el-button type="primary" :loading="developerScanning" @click="scanDeveloper">扫描并统计</el-button></template>
     </el-dialog>
   </main>
 </template>
 
 <style scoped>
+.more-details { margin-top: 10px; }
+.developer-warning { margin: 8px 60px; padding: 10px 14px; font-size: 12px; color: #ad7f2d; background: #fffbf1; border-radius: 3px; overflow-wrap: anywhere; }
+.developer-warning summary { cursor: pointer; }
+.developer-warning p { white-space: pre-line; line-height: 1.7; }
+.developer-scan-state { font-size: 12px; color: #92989c; }
 .developer-note { font-size: 12px; line-height: 1.8; color: #8b9297; }
 .developer-roots { display: flex; gap: 6px; flex-wrap: wrap; margin: -8px 0 16px; }
 .clean-page { display: flex; flex-direction: column; height: 100%; background: #fff; color: #444; }

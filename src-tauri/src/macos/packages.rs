@@ -101,6 +101,9 @@ pub fn scan_bundles(roots: &[PathBuf]) -> Vec<AppInfo> {
                 desktop_file: path.to_string_lossy().into_owned(),
                 is_system: path.starts_with("/System"),
                 has_ui: true,
+                can_uninstall: !path.starts_with("/System"),
+                install_path: path.to_string_lossy().into_owned(),
+                ..AppInfo::default()
             });
         }
     }
@@ -168,6 +171,8 @@ pub fn list_installed_apps() -> Vec<AppInfo> {
                     desktop_file: String::new(),
                     is_system: false,
                     has_ui: false,
+                    can_uninstall: true,
+                    ..AppInfo::default()
                 });
             }
         }

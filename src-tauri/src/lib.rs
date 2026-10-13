@@ -7,12 +7,14 @@ pub mod developer;
 #[cfg_attr(target_os = "macos", path = "macos/entries.rs")]
 pub mod entries;
 pub mod icons;
+pub mod manual_apps;
 pub mod models;
 #[cfg_attr(target_os = "macos", path = "macos/packages.rs")]
 pub mod packages;
 pub mod platform;
 pub mod privileged;
 pub mod query;
+pub mod software_updates;
 pub mod storage;
 pub mod system_scan;
 #[cfg_attr(target_os = "macos", path = "macos/updates.rs")]
@@ -29,7 +31,6 @@ fn get_platform_info() -> platform::PlatformInfo {
 
 use models::{
     AppInfo, AutostartItem, CleanCategory, DesktopEntryItem, DuplicateGroup, LargeFileItem,
-    UpgradablePackage,
 };
 
 #[tauri::command]
@@ -58,11 +59,14 @@ fn get_developer_roots() -> Vec<String> {
 
 #[tauri::command]
 async fn scan_developer_junk(
+    app: tauri::AppHandle,
     root: Option<String>,
     min_age_days: u64,
 ) -> Result<CleanCategory, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        cleaner::scan_developer_junk(root.as_deref(), min_age_days)
+        cleaner::scan_developer_junk(root.as_deref(), min_age_days, |progress| {
+            let _ = app.emit("developer-scan-progress", progress);
+        })
     })
     .await
     .map_err(|e| e.to_string())?
@@ -78,10 +82,43 @@ async fn get_installed_apps() -> Result<Vec<AppInfo>, String> {
 }
 
 #[tauri::command]
-async fn uninstall_app(pkg_type: String, key: String) -> Result<String, String> {
-    tauri::async_runtime::spawn_blocking(move || packages::uninstall_package(&pkg_type, &key))
+async fn uninstall_app(
+    app: tauri::AppHandle,
+    pkg_type: String,
+    key: String,
+    request_id: String,
+) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let _ = app.emit("uninstall-progress",serde_json::json!({"request_id":request_id,"message":"正在核对应用并调用卸载工具，可能需要系统授权…","percentage":null}));
+        let result = packages::uninstall_package(&pkg_type,&key);
+        if result.is_ok() { let _ = app.emit("uninstall-progress",serde_json::json!({"request_id":request_id,"message":"卸载完成","percentage":100})); }
+        result
+    }).await.map_err(|e|e.to_string())?
+}
+
+#[tauri::command]
+async fn get_manual_uninstall_plan(key: String) -> Result<manual_apps::UninstallPlan, String> {
+    if !cfg!(target_os = "linux") {
+        return Err("当前平台不使用桌面入口卸载".into());
+    }
+    tauri::async_runtime::spawn_blocking(move || manual_apps::plan(&key))
         .await
         .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn uninstall_manual_app(
+    app: tauri::AppHandle,
+    plan_id: String,
+    paths: Vec<String>,
+    request_id: String,
+) -> Result<String, String> {
+    if !cfg!(target_os = "linux") {
+        return Err("当前平台不使用桌面入口卸载".into());
+    }
+    tauri::async_runtime::spawn_blocking(move || manual_apps::uninstall(&plan_id,paths,|done,total,path| {
+        let _ = app.emit("uninstall-progress",serde_json::json!({"request_id":request_id,"message":path,"done":done,"total":total,"percentage": done.saturating_mul(100).checked_div(total)}));
+    })).await.map_err(|e|e.to_string())?
 }
 
 #[tauri::command]
@@ -160,10 +197,10 @@ async fn get_clean_item_details(path: String) -> Result<Vec<models::CleanFileDet
 use tauri::{AppHandle, Emitter};
 
 #[tauri::command]
-async fn check_software_updates() -> Result<Vec<UpgradablePackage>, String> {
-    tauri::async_runtime::spawn_blocking(updates::check_all_upgradable)
+async fn check_software_updates() -> Result<models::SoftwareUpdateReport, String> {
+    tauri::async_runtime::spawn_blocking(software_updates::check)
         .await
-        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -203,6 +240,8 @@ pub fn run() {
             analyze_disk,
             get_installed_apps,
             uninstall_app,
+            get_manual_uninstall_plan,
+            uninstall_manual_app,
             get_desktop_entries,
             toggle_desktop_visibility,
             get_autostart_items,
