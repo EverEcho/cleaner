@@ -37,6 +37,93 @@ pub fn run(verb: &str, manager: &str, key: &str) -> Result<String, String> {
     Ok(String::from_utf8_lossy(&result.stdout).into_owned())
 }
 
+pub fn remove_checked(receipt: &crate::package_plan::RemovalReceipt) -> Result<String, String> {
+    if !session_cache_installed() {
+        return Err("请先配置管理员授权助手，影响预览卸载必须由助手复核".into());
+    }
+    let payload = serde_json::to_string(receipt).map_err(|e| e.to_string())?;
+    let pkexec = platform::command_path("pkexec").ok_or("系统授权程序不可用")?;
+    let output = platform::checked_output(Command::new(pkexec).args([
+        HELPER,
+        "remove-checked",
+        "package",
+        &payload,
+    ]))?;
+    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
+pub fn upgrade_checked(
+    receipt: &crate::native_update_plan::UpgradeReceipt,
+) -> Result<String, String> {
+    if !session_cache_installed() {
+        return Err("请先配置管理员授权组件，再执行版本锁定升级".into());
+    }
+    let payload = serde_json::to_string(receipt).map_err(|e| e.to_string())?;
+    let pkexec = platform::command_path("pkexec").ok_or("系统授权程序不可用")?;
+    let output = platform::checked_output(Command::new(pkexec).args([
+        HELPER,
+        "upgrade-checked",
+        "package",
+        &payload,
+    ]))?;
+    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
+pub fn clean_system_report(
+    plans: &std::collections::HashMap<String, String>,
+) -> Result<crate::models::ActionReport, String> {
+    if cfg!(target_os = "macos") {
+        let (socket, docker) = local_docker()?;
+        let current = crate::system_scan::scan_docker(&socket, &docker);
+        for (id, hash) in plans {
+            let plan = current
+                .iter()
+                .find(|p| &p.id == id && p.error.is_none())
+                .ok_or("Docker 清理项不可用")?;
+            if hash != &plan.fingerprint() {
+                return Err("Docker 对象或占用已改变，请重新扫描".into());
+            }
+        }
+        let mut report = crate::models::ActionReport::default();
+        let host = format!("unix://{socket}");
+        for (id, kind) in [
+            ("docker-images", "image"),
+            ("docker-builder", "builder"),
+            ("docker-containers", "container"),
+        ] {
+            if !plans.contains_key(id) {
+                continue;
+            }
+            let mut command = Command::new(&docker);
+            command.args(["--host", &host, kind, "prune", "--force"]);
+            if kind != "container" {
+                command.arg("--all");
+            }
+            match platform::checked_output(&mut command) {
+                Ok(output) => report.push(
+                    format!("system:{id}"),
+                    "success",
+                    String::from_utf8_lossy(&output.stdout),
+                ),
+                Err(error) => report.push(format!("system:{id}"), "failed", error),
+            }
+        }
+        return Ok(report);
+    }
+    if !session_cache_installed() {
+        return Err("管理员授权配置不可用，请重新配置".into());
+    }
+    let json = serde_json::to_string(plans).map_err(|e| e.to_string())?;
+    let output = platform::checked_output(Command::new("pkexec").args([
+        HELPER,
+        "clean-batch-report",
+        "system",
+        &json,
+    ]))?;
+    serde_json::from_slice(&output.stdout)
+        .map_err(|_| "助手不支持逐项反馈，请更新管理员授权组件".into())
+}
+
 pub fn scan_system() -> Result<Vec<crate::system_scan::SystemPlan>, String> {
     if !session_cache_installed() {
         return Err("请点击上方“管理员授权”，完成后将重新扫描系统文件".into());

@@ -12,7 +12,7 @@ use std::{
     fs,
     path::{Path, PathBuf},
     sync::{LazyLock, Mutex},
-    time::SystemTime,
+    time::{Instant, SystemTime},
 };
 use walkdir::WalkDir;
 
@@ -49,6 +49,11 @@ pub fn launcher_roots() -> Vec<PathBuf> {
 }
 
 pub fn launchers_in(roots: &[PathBuf]) -> Vec<Launcher> {
+    launchers_with_warnings(roots).0
+}
+
+pub fn launchers_with_warnings(roots: &[PathBuf]) -> (Vec<Launcher>, Vec<String>) {
+    let mut warnings = Vec::new();
     let mut seen = HashSet::new();
     let mut result = Vec::new();
     for root in roots {
@@ -56,8 +61,19 @@ pub fn launchers_in(roots: &[PathBuf]) -> Vec<Launcher> {
             .max_depth(3)
             .sort_by_file_name()
             .into_iter()
-            .flatten()
         {
+            let entry = match entry {
+                Ok(entry) => entry,
+                Err(error) => {
+                    if error
+                        .io_error()
+                        .is_none_or(|e| e.kind() != std::io::ErrorKind::NotFound)
+                    {
+                        warnings.push(format!("应用入口未读取：{error}"));
+                    }
+                    continue;
+                }
+            };
             let path = entry.path();
             if path.extension().is_none_or(|s| s != "desktop") || !path.is_file() {
                 continue;
@@ -71,8 +87,12 @@ pub fn launchers_in(roots: &[PathBuf]) -> Vec<Launcher> {
             if !seen.insert(id) {
                 continue;
             }
-            let Ok(text) = fs::read_to_string(path) else {
-                continue;
+            let text = match fs::read_to_string(path) {
+                Ok(text) => text,
+                Err(error) => {
+                    warnings.push(format!("应用入口 {} 未读取：{error}", path.display()));
+                    continue;
+                }
             };
             let fields = desktop::fields(&text);
             if fields.get("Type") != Some(&"Application")
@@ -93,7 +113,7 @@ pub fn launchers_in(roots: &[PathBuf]) -> Vec<Launcher> {
             });
         }
     }
-    result
+    (result, warnings)
 }
 
 fn exec_words(value: &str) -> Option<Vec<String>> {
@@ -364,13 +384,28 @@ pub fn discover(
     owned: &HashSet<PathBuf>,
     represented: &HashSet<PathBuf>,
 ) -> Vec<AppInfo> {
+    discover_controlled(launchers, owned, represented, &|| false, &mut |_, _, _| {}).0
+}
+
+pub fn discover_controlled(
+    launchers: &[Launcher],
+    owned: &HashSet<PathBuf>,
+    represented: &HashSet<PathBuf>,
+    cancelled: &dyn Fn() -> bool,
+    progress: &mut dyn FnMut(&str, u64, u64),
+) -> (Vec<AppInfo>, Vec<String>) {
+    let mut warnings = Vec::new();
     let Some(home) = platform::home().and_then(|home| fs::canonicalize(home).ok()) else {
-        return Vec::new();
+        return (Vec::new(), vec!["用户目录未读取，独立应用数量未知".into()]);
     };
     let mut seen = represented.clone();
     let mut records = HashMap::new();
     let mut result = Vec::new();
     for launcher in launchers {
+        if cancelled() {
+            break;
+        }
+        progress(&launcher.name, result.len() as u64, launchers.len() as u64);
         if owned.contains(&launcher.path) {
             continue;
         }
@@ -381,9 +416,28 @@ pub fn discover(
             continue;
         }
         let (target, toolbox) = target_for(&binary, &home);
-        let size = target
-            .as_ref()
-            .and_then(|p| crate::cleaner::get_dir_or_file_size(p).ok());
+        let size = target.as_ref().and_then(|path| {
+            let mut bytes = 0;
+            let mut known = true;
+            for entry in WalkDir::new(path).follow_links(false) {
+                if cancelled() {
+                    known = false;
+                    break;
+                }
+                match entry {
+                    Ok(entry) if entry.file_type().is_file() => match entry.metadata() {
+                        Ok(meta) => bytes += meta.len(),
+                        Err(_) => known = false,
+                    },
+                    Err(_) => known = false,
+                    _ => {}
+                }
+            }
+            if !known {
+                warnings.push(format!("{} 的占用未完整读取", path.display()));
+            }
+            known.then_some(bytes)
+        });
         let note = if target.is_some() {
             "将展示程序、自启与已确认的残留路径，确认后移入废纸篓"
         } else {
@@ -420,7 +474,7 @@ pub fn discover(
     if let Ok(mut inventory) = APPS.lock() {
         *inventory = records;
     }
-    result
+    (result, warnings)
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
@@ -432,6 +486,10 @@ pub struct UninstallItem {
     pub size: String,
     pub selected: bool,
     pub required: bool,
+    #[serde(default)]
+    pub owners: Vec<String>,
+    #[serde(default)]
+    pub group: String,
 }
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct UninstallPlan {
@@ -446,6 +504,7 @@ struct Receipt {
     app: ManualApp,
     fingerprints: HashMap<PathBuf, String>,
     completed: HashSet<PathBuf>,
+    created: Instant,
 }
 static PLANS: LazyLock<Mutex<HashMap<String, Receipt>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
@@ -497,8 +556,10 @@ fn append(
         kind: kind.into(),
         size_bytes: bytes,
         size: format_size(bytes),
-        selected: true,
+        selected: kind != "config",
         required,
+        owners: Vec::new(),
+        group: String::new(),
     });
     Ok(())
 }
@@ -734,6 +795,8 @@ fn append_empty(items: &mut Vec<UninstallItem>, home: &Path, path: &Path) -> Res
         size: "仅清空目录".into(),
         selected: true,
         required: false,
+        owners: Vec::new(),
+        group: String::new(),
     });
     Ok(())
 }
@@ -758,6 +821,166 @@ fn snapshot(item: &UninstallItem) -> Result<String, String> {
     {
         Ok(format!("directory:{:?}", meta.created()))
     }
+}
+
+fn assign_owners(items: &mut [UninstallItem], targets: &[PathBuf], home: &Path, name: &str) {
+    let main = targets
+        .first()
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    for item in items {
+        let path = Path::new(&item.path);
+        let binary = if ["launcher", "autostart"].contains(&item.kind.as_str()) {
+            fs::read_to_string(path).ok().and_then(|text| {
+                desktop::fields(&text)
+                    .get("Exec")
+                    .and_then(|exec| executable(exec))
+            })
+        } else if item.kind == "script" {
+            fs::canonicalize(path).ok()
+        } else {
+            None
+        };
+        let script = (item.kind == "script").then(|| fs::read_to_string(path).unwrap_or_default());
+        for target in targets.iter().skip(1) {
+            let metadata = ide_info(target).unwrap_or(Value::Null);
+            let data_name = metadata["dataDirectoryName"].as_str().unwrap_or("");
+            let vendor = if metadata["productCode"] == "AI" {
+                "Google"
+            } else {
+                "JetBrains"
+            };
+            let residual = !data_name.is_empty()
+                && [
+                    ("XDG_CONFIG_HOME", ".config"),
+                    ("XDG_CACHE_HOME", ".cache"),
+                    ("XDG_DATA_HOME", ".local/share"),
+                ]
+                .iter()
+                .any(|(env, fallback)| {
+                    let base =
+                        platform::xdg_dir(env, fallback).unwrap_or_else(|| home.join(fallback));
+                    let known = base.join(vendor).join(data_name);
+                    fs::canonicalize(&known).is_ok_and(|known| path == known)
+                });
+            if path == target
+                || residual
+                || binary.as_ref().is_some_and(|p| p.starts_with(target))
+                || script
+                    .as_ref()
+                    .is_some_and(|text| text.contains(&format!("{}/bin/", target.display())))
+            {
+                item.owners.push(target.to_string_lossy().into_owned());
+                item.group = metadata["name"].as_str().unwrap_or("IDE").into();
+            }
+        }
+        if item.owners.is_empty() {
+            item.owners.push(main.clone());
+            item.group = name.into();
+        }
+        if item.owners.len() > 1 {
+            item.group = "多个 IDE 的共享数据".into();
+            item.selected = false;
+        }
+    }
+}
+
+pub fn known_caches(key: &str) -> Result<Vec<PathBuf>, String> {
+    let app = APPS
+        .lock()
+        .map_err(|e| e.to_string())?
+        .get(key)
+        .cloned()
+        .ok_or("请先扫描应用")?;
+    let home = platform::home()
+        .and_then(|p| fs::canonicalize(p).ok())
+        .ok_or("无法读取用户目录")?;
+    let target = app.target.as_ref().ok_or("安装身份未确认")?;
+    let mut paths = Vec::new();
+    if let Some(info) = ide_info(target)
+        && let Some(dir) = info["dataDirectoryName"].as_str().filter(|s| {
+            !s.is_empty()
+                && ![".", ".."].contains(s)
+                && s.chars()
+                    .all(|c| c.is_ascii_alphanumeric() || ".-_".contains(c))
+        })
+    {
+        let vendor = if info["productCode"] == "AI" {
+            "Google"
+        } else {
+            "JetBrains"
+        };
+        if let Some(cache) = platform::xdg_dir("XDG_CACHE_HOME", ".cache") {
+            paths.push(cache.join(vendor).join(dir));
+        }
+    }
+    if let Some(product) = electron_info(target, &app.executable)
+        && let Some(name) = product["nameShort"].as_str().filter(|s| {
+            !s.is_empty()
+                && ![".", ".."].contains(s)
+                && !s.contains(['/', '\\'])
+                && !s.chars().any(char::is_control)
+        })
+    {
+        if let Some(config) = platform::xdg_dir("XDG_CONFIG_HOME", ".config") {
+            let profile = config.join(name);
+            if profile.join("User").is_dir() {
+                for cache in [
+                    "Cache",
+                    "Code Cache",
+                    "GPUCache",
+                    "DawnWebGPUCache",
+                    "DawnGraphiteCache",
+                    "CachedData",
+                    "CachedExtensionVSIXs",
+                    "logs",
+                    "Crashpad",
+                ] {
+                    paths.push(profile.join(cache));
+                }
+            }
+        }
+        if let Some(cache) = platform::xdg_dir("XDG_CACHE_HOME", ".cache") {
+            paths.push(cache.join(name));
+        }
+    }
+    if app.toolbox
+        && let Some(cache) = platform::xdg_dir("XDG_CACHE_HOME", ".cache")
+    {
+        paths.push(cache.join("JetBrains/Toolbox"));
+    }
+    paths.retain(|path| path.is_dir() && user_path(path, &home));
+    Ok(paths)
+}
+
+#[derive(Clone, Serialize, Debug)]
+pub struct UninstallStatus {
+    pub completed: Vec<String>,
+    pub pending: Vec<String>,
+}
+
+pub fn uninstall_status(id: &str) -> Result<UninstallStatus, String> {
+    let receipts = PLANS.lock().map_err(|e| e.to_string())?;
+    let receipt = receipts.get(id).ok_or("卸载预览已失效")?;
+    Ok(UninstallStatus {
+        completed: receipt
+            .completed
+            .iter()
+            .map(|p| p.to_string_lossy().into_owned())
+            .collect(),
+        pending: receipt
+            .plan
+            .items
+            .iter()
+            .filter(|item| {
+                !receipt
+                    .completed
+                    .iter()
+                    .any(|p| Path::new(&item.path).starts_with(p))
+            })
+            .map(|item| item.path.clone())
+            .collect(),
+    })
 }
 
 pub fn plan(key: &str) -> Result<UninstallPlan, String> {
@@ -827,7 +1050,11 @@ pub fn plan(key: &str) -> Result<UninstallPlan, String> {
                     &home,
                     &root.join("JetBrains/Toolbox"),
                     "Toolbox 缓存/配置",
-                    "cache",
+                    if env == "XDG_CONFIG_HOME" {
+                        "config"
+                    } else {
+                        "cache"
+                    },
                     false,
                 )?;
             }
@@ -919,6 +1146,7 @@ pub fn plan(key: &str) -> Result<UninstallPlan, String> {
     {
         return Err("应用目录权限或归属不明确，无法自动卸载".into());
     }
+    assign_owners(&mut items, &targets, &home, &app.app.name);
     let mut fingerprints = HashMap::new();
     for item in &items {
         fingerprints.insert(PathBuf::from(&item.path), snapshot(item)?);
@@ -929,11 +1157,11 @@ pub fn plan(key: &str) -> Result<UninstallPlan, String> {
         fingerprints
     )));
     let note = if app.toolbox {
-        "请先退出所选应用和 IDE。选中的程序、入口与残留文件移入废纸篓；IDE 可单独取消勾选。只处理已确认的安装与数据目录，项目代码目录不参与扫描。共享 JetBrains Daemon、系统凭据和无法确认归属的残留保留。"
+        "请先退出所选应用和 IDE。IDE 与关联缓存、启动入口联动选择；取消 IDE 将保留其数据。配置及账户默认保留，共享数据仅在其全部所属 IDE 均选中时可选。项目代码、共享 JetBrains Daemon、系统凭据及无法确认归属的残留保留。"
     } else if electron_info(target, &app.executable).is_some() {
         "请先退出应用。选中的程序、入口与已确认的缓存移入废纸篓；配置默认不选。项目代码、未保存备份、本地历史、工作区状态、用户扩展及无法确认归属的残留保留。"
     } else {
-        "请先退出所选应用。选中的程序、入口与配置缓存移入废纸篓；项目代码和无法确认归属的残留保留。"
+        "请先退出所选应用。选中的程序、入口与缓存移入废纸篓；配置及账户默认保留，项目代码和无法确认归属的残留保留。"
     };
     let plan = UninstallPlan {
         id: id.clone(),
@@ -942,7 +1170,10 @@ pub fn plan(key: &str) -> Result<UninstallPlan, String> {
         items,
     };
     let mut receipts = PLANS.lock().map_err(|e| e.to_string())?;
-    receipts.clear();
+    receipts.retain(|_, receipt| receipt.created.elapsed().as_secs() < 600);
+    if receipts.len() >= 64 {
+        return Err("打开的卸载预览过多，请重启应用后重试".into());
+    }
     receipts.insert(
         id,
         Receipt {
@@ -950,6 +1181,7 @@ pub fn plan(key: &str) -> Result<UninstallPlan, String> {
             app,
             fingerprints,
             completed: HashSet::new(),
+            created: Instant::now(),
         },
     );
     Ok(plan)
@@ -1010,6 +1242,21 @@ fn ensure_stopped(_paths: &[PathBuf]) -> Result<(), String> {
 
 fn validated_selection(receipt: &Receipt, paths: &[String]) -> Result<Vec<PathBuf>, String> {
     let selected: HashSet<_> = paths.iter().map(PathBuf::from).collect();
+    for item in receipt
+        .plan
+        .items
+        .iter()
+        .filter(|item| selected.contains(Path::new(&item.path)))
+    {
+        if item.owners.iter().any(|owner| {
+            !selected.contains(Path::new(owner)) && !receipt.completed.contains(Path::new(owner))
+        }) {
+            return Err(format!(
+                "请先选择 {} 所属的全部应用或 IDE；取消 IDE 后必须保留其关联数据",
+                item.name
+            ));
+        }
+    }
     for item in receipt.plan.items.iter().filter(|item| item.required) {
         if !selected.contains(Path::new(&item.path))
             && !receipt
@@ -1103,6 +1350,9 @@ pub fn uninstall(
         .get(id)
         .cloned()
         .ok_or("卸载预览已失效，请重新查看")?;
+    if receipt.created.elapsed().as_secs() >= 600 {
+        return Err("卸载预览超过 10 分钟，请重新查看并确认".into());
+    }
     if !APPS
         .lock()
         .map_err(|e| e.to_string())?
@@ -1174,7 +1424,7 @@ pub fn uninstall(
         }
         report(count + 1, selected.len(), &path.to_string_lossy());
     }
-    PLANS.lock().map_err(|e| e.to_string())?.remove(id);
+    // Keep completion receipts so the UI can reconcile partial success and retry only pending paths.
     Ok(format!(
         "已将 {} 项程序与残留移入废纸篓，清理 {removed_empty} 个空目录；项目代码保留{}",
         selected.len() - preserved_containers - removed_empty,
@@ -1391,6 +1641,7 @@ exit 0
             },
             fingerprints: hashes,
             completed: HashSet::new(),
+            created: Instant::now(),
         };
         let selected: Vec<_> = items.iter().map(|item| item.path.clone()).collect();
         let result = validated_selection(&receipt, &selected).unwrap();
@@ -1404,6 +1655,81 @@ exit 0
         );
         assert!(project.is_file());
     }
+    #[test]
+    fn ide_cancellation_keeps_related_data_and_configuration_is_opt_in() {
+        let f = Fixture::new();
+        let main = f.binary("opt/toolbox/program");
+        let ide = f.binary("opt/ide/program");
+        let cache = f.file("cache/ide/content", "cache");
+        let config = f.file("config/ide/settings", "personal settings");
+        let mut items = Vec::new();
+        for (path, kind, required) in [
+            (&main, "program", true),
+            (&ide, "ide", false),
+            (&cache, "cache", false),
+            (&config, "config", false),
+        ] {
+            append(&mut items, &f.0, path, kind, kind, required).unwrap();
+        }
+        assert!(
+            !items
+                .iter()
+                .find(|item| item.kind == "config")
+                .unwrap()
+                .selected
+        );
+        for item in &mut items {
+            item.owners = vec![if item.kind == "program" {
+                main.to_string_lossy().into_owned()
+            } else {
+                ide.to_string_lossy().into_owned()
+            }];
+        }
+        let fingerprints = items
+            .iter()
+            .map(|item| (PathBuf::from(&item.path), snapshot(item).unwrap()))
+            .collect();
+        let receipt = Receipt {
+            plan: UninstallPlan {
+                id: "linked".into(),
+                name: "Toolbox".into(),
+                note: String::new(),
+                items,
+            },
+            app: ManualApp {
+                app: AppInfo::default(),
+                executable: main.clone(),
+                target: Some(main.clone()),
+                toolbox: true,
+            },
+            fingerprints,
+            completed: HashSet::new(),
+            created: Instant::now(),
+        };
+        assert!(
+            validated_selection(
+                &receipt,
+                &[
+                    main.to_string_lossy().into_owned(),
+                    cache.to_string_lossy().into_owned()
+                ]
+            )
+            .is_err()
+        );
+        assert!(
+            validated_selection(
+                &receipt,
+                &[
+                    main.to_string_lossy().into_owned(),
+                    ide.to_string_lossy().into_owned(),
+                    cache.to_string_lossy().into_owned()
+                ]
+            )
+            .is_ok()
+        );
+        assert!(validated_selection(&receipt, &[main.to_string_lossy().into_owned()]).is_ok());
+    }
+
     #[test]
     fn preview_rejects_unknown_changed_and_missing_required_targets_and_allows_retry() {
         let f = Fixture::new();
@@ -1444,6 +1770,7 @@ exit 0
             },
             fingerprints: hashes,
             completed: HashSet::new(),
+            created: Instant::now(),
         };
         let paths = vec![
             program.to_string_lossy().into_owned(),

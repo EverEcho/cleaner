@@ -143,3 +143,48 @@ pub fn format_size(bytes: u64) -> String {
         format!("{} B", bytes)
     }
 }
+
+/// An auditable result: success remains visible when a later item fails.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ActionReport {
+    pub items: Vec<ActionItemResult>,
+    pub succeeded: usize,
+    pub failed: usize,
+    pub skipped: usize,
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ActionItemResult {
+    pub path: String,
+    pub status: String,
+    pub message: String,
+}
+impl ActionReport {
+    pub fn push(&mut self, path: impl Into<String>, status: &str, message: impl Into<String>) {
+        match status {
+            "success" => self.succeeded += 1,
+            "failed" => self.failed += 1,
+            _ => self.skipped += 1,
+        }
+        self.items.push(ActionItemResult {
+            path: path.into(),
+            status: status.into(),
+            message: message.into(),
+        });
+    }
+}
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ScanOptions {
+    pub roots: Vec<String>,
+    pub excluded: Vec<String>,
+    pub min_mb: Option<u64>,
+    pub max_depth: Option<usize>,
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FileScanReport<T> {
+    pub items: Vec<T>,
+    pub warnings: Vec<String>,
+    pub roots: Vec<String>,
+    pub files_scanned: u64,
+    pub cancelled: bool,
+}

@@ -13,8 +13,8 @@
     "windows": [
       {
         "title": "软件管家",
-        "width": 1000,
-        "height": 650,
+        "width": 1180,
+        "height": 760,
         "minWidth": 900,
         "minHeight": 580,
         "center": true,

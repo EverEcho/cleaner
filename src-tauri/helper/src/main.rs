@@ -1,5 +1,9 @@
 #[path = "../../src/admin_actions.rs"]
 mod admin_actions;
+#[path = "../../src/native_update_plan.rs"]
+mod native_update_plan;
+#[path = "../../src/package_plan.rs"]
+mod package_plan;
 #[path = "../../src/query.rs"]
 mod query;
 #[path = "../../src/system_scan.rs"]
@@ -41,7 +45,30 @@ fn run() -> Result<(), String> {
         );
         return Ok(());
     }
-    if args[0] == "clean-batch" && args[1] == "system" {
+    if args[0] == "remove-checked" && args[1] == "package" {
+        let receipt: package_plan::RemovalReceipt =
+            serde_json::from_str(&args[2]).map_err(|_| "卸载影响计划无效")?;
+        package_plan::verify(&receipt)?;
+        return execute(admin_actions::resolve(
+            "remove",
+            &receipt.manager,
+            &receipt.key,
+        )?);
+    }
+    if args[0] == "upgrade-checked" && args[1] == "package" {
+        let receipt: native_update_plan::UpgradeReceipt =
+            serde_json::from_str(&args[2]).map_err(|_| "版本锁定升级计划无效")?;
+        native_update_plan::verify(&receipt)?;
+        let command = native_update_plan::resolve(&receipt)?;
+        return execute(admin_actions::AdminAction {
+            program: command.program,
+            args: command.args,
+        });
+    }
+    if matches!(args[0].as_str(), "remove" | "upgrade") {
+        return Err("卸载或升级必须通过已确认范围凭据，旧的直接入口已停用".into());
+    }
+    if matches!(args[0].as_str(), "clean-batch" | "clean-batch-report") && args[1] == "system" {
         let requested: std::collections::HashMap<String, String> =
             serde_json::from_str(&args[2]).map_err(|_| "清理计划无效")?;
         if requested.is_empty() || requested.len() > 6 {
@@ -59,6 +86,7 @@ fn run() -> Result<(), String> {
             admin_actions::resolve("clean", id, "")?;
         }
         // Images first, stopped containers last, so container removal cannot expand image scope.
+        let mut results = Vec::new();
         for id in [
             "apt",
             "journal",
@@ -68,13 +96,60 @@ fn run() -> Result<(), String> {
             "docker-containers",
         ] {
             if requested.contains_key(id) {
-                execute(admin_actions::resolve("clean", id, "")?)?;
+                let action = admin_actions::resolve("clean", id, "")?;
+                if args[0] == "clean-batch-report" {
+                    let (status, message) = match execute_capture(action) {
+                        Ok(message) => ("success", message),
+                        Err(error) => ("failed", error),
+                    };
+                    results.push(serde_json::json!({"path":format!("system:{id}"),"status":status,"message":message}));
+                } else {
+                    execute(action)?;
+                }
             }
+        }
+        if args[0] == "clean-batch-report" {
+            let succeeded = results.iter().filter(|r| r["status"] == "success").count();
+            let failed = results.len() - succeeded;
+            println!(
+                "{}",
+                serde_json::json!({"items":results,"succeeded":succeeded,"failed":failed,"skipped":0})
+            );
         }
         return Ok(());
     }
     let action = admin_actions::resolve(&args[0], &args[1], &args[2])?;
     execute(action)
+}
+
+fn execute_capture(action: admin_actions::AdminAction) -> Result<String, String> {
+    let output = std::process::Command::new(action.program)
+        .args(action.args)
+        .env_clear()
+        .env("PATH", "/usr/sbin:/usr/bin:/sbin:/bin")
+        .env("HOME", "/root")
+        .env("LANG", "C.UTF-8")
+        .output()
+        .map_err(|e| e.to_string())?;
+    if output.status.success() {
+        Ok(String::from_utf8_lossy(&output.stdout)
+            .chars()
+            .take(8000)
+            .collect())
+    } else {
+        Err(format!(
+            "操作未完成 ({:?})：{} {}",
+            output.status.code(),
+            String::from_utf8_lossy(&output.stderr)
+                .chars()
+                .take(8000)
+                .collect::<String>(),
+            String::from_utf8_lossy(&output.stdout)
+                .chars()
+                .take(2000)
+                .collect::<String>()
+        ))
+    }
 }
 
 fn execute(action: admin_actions::AdminAction) -> Result<(), String> {

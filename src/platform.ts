@@ -12,7 +12,9 @@ export const platformInfo = ref<PlatformInfo | null>(null);
 let pending: Promise<void> | undefined;
 export function loadPlatform() {
   if (!pending && isTauri()) {
-    pending = invoke<PlatformInfo>('get_platform_info').then(info => { platformInfo.value = info; });
+    pending = invoke<PlatformInfo>('get_platform_info')
+      .then(info => { platformInfo.value = info; })
+      .catch(error => { pending = undefined; throw error; });
   }
   return pending ?? Promise.resolve();
 }

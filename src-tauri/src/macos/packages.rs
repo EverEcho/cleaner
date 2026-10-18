@@ -1,3 +1,4 @@
+use crate::platform::QueryCommand;
 use crate::{
     models::{AppInfo, format_size},
     platform,
@@ -43,7 +44,51 @@ pub fn application_roots() -> Vec<PathBuf> {
     roots
 }
 
+pub fn installed_cask_apps(token: &str) -> Result<Vec<PathBuf>, String> {
+    platform::validate_package_key(token)?;
+    let brew = platform::command_path("brew").ok_or("未安装 Homebrew")?;
+    let output = Command::new(brew)
+        .args(["list", "--cask", "--", token])
+        .env("HOMEBREW_NO_AUTO_UPDATE", "1")
+        .query_output()
+        .map_err(|e| e.to_string())?;
+    if !output.status.success() {
+        return Err("Homebrew 已安装产物查询失败".into());
+    }
+    Ok(cask_artifact_paths(&String::from_utf8_lossy(
+        &output.stdout,
+    )))
+}
+fn cask_artifact_paths(text: &str) -> Vec<PathBuf> {
+    text.lines()
+        .map(str::trim)
+        .map(PathBuf::from)
+        .filter(|path| path.is_absolute() && path.extension().is_some_and(|s| s == "app"))
+        .filter_map(|path| fs::canonicalize(path).ok())
+        .collect()
+}
+fn assign_casks(apps: &mut [AppInfo], ownership: &HashMap<PathBuf, String>) {
+    for app in apps {
+        if !app.is_system
+            && let Ok(path) = fs::canonicalize(&app.install_path)
+            && let Some(token) = ownership.get(&path)
+        {
+            app.key = token.clone();
+            app.pkg_type = "brew-cask".into();
+        }
+    }
+}
+
 pub fn scan_bundles(roots: &[PathBuf]) -> Vec<AppInfo> {
+    scan_bundles_report(roots, &|| false, &mut |_, _, _| {}).0
+}
+
+fn scan_bundles_report(
+    roots: &[PathBuf],
+    cancelled: &dyn Fn() -> bool,
+    progress: &mut dyn FnMut(&str, u64, u64),
+) -> (Vec<AppInfo>, Vec<String>) {
+    let mut warnings = Vec::new();
     let mut apps = Vec::new();
     for root in roots {
         for entry in WalkDir::new(root)
@@ -56,13 +101,34 @@ pub fn scan_bundles(roots: &[PathBuf]) -> Vec<AppInfo> {
                         .and_then(Path::extension)
                         .is_none_or(|s| s != "app")
             })
-            .flatten()
         {
+            if cancelled() {
+                return (apps, warnings);
+            }
+            let entry = match entry {
+                Ok(entry) => entry,
+                Err(error) => {
+                    if error
+                        .io_error()
+                        .is_none_or(|e| e.kind() != std::io::ErrorKind::NotFound)
+                    {
+                        warnings.push(format!("应用目录未读取：{error}"));
+                    }
+                    continue;
+                }
+            };
             let path = entry.path();
             if !entry.file_type().is_dir() || path.extension().is_none_or(|s| s != "app") {
                 continue;
             }
-            let plist = read_plist(&path.join("Contents/Info.plist")).unwrap_or(Value::Null);
+            progress(&path.to_string_lossy(), apps.len() as u64, 0);
+            let plist = match read_plist(&path.join("Contents/Info.plist")) {
+                Ok(data) => data,
+                Err(error) => {
+                    warnings.push(format!("{} 应用元数据未知：{error}", path.display()));
+                    Value::Null
+                }
+            };
             let fallback = path
                 .file_stem()
                 .unwrap_or_default()
@@ -78,19 +144,34 @@ pub fn scan_bundles(roots: &[PathBuf]) -> Vec<AppInfo> {
                 .or(plist["CFBundleVersion"].as_str())
                 .unwrap_or("")
                 .to_string();
-            let size_bytes = WalkDir::new(path)
-                .into_iter()
-                .flatten()
-                .filter(|e| e.file_type().is_file())
-                .filter_map(|e| e.metadata().ok())
-                .map(|m| m.len())
-                .sum();
+            let mut size_bytes = 0;
+            let mut size_known = true;
+            for file in WalkDir::new(path) {
+                if cancelled() {
+                    return (apps, warnings);
+                }
+                match file {
+                    Ok(file) if file.file_type().is_file() => match file.metadata() {
+                        Ok(meta) => size_bytes += meta.len(),
+                        Err(_) => size_known = false,
+                    },
+                    Err(_) => size_known = false,
+                    _ => {}
+                }
+            }
+            if !size_known {
+                warnings.push(format!("{} 占用统计不完整", path.display()));
+            }
             apps.push(AppInfo {
                 key: path.to_string_lossy().into_owned(),
                 name,
                 pkg_type: "app".into(),
                 version,
-                size: format_size(size_bytes),
+                size: if size_known {
+                    format_size(size_bytes)
+                } else {
+                    "未知（部分目录未读取）".into()
+                },
                 size_bytes,
                 install_time: String::new(),
                 description: plist["CFBundleIdentifier"].as_str().unwrap_or("").into(),
@@ -107,42 +188,69 @@ pub fn scan_bundles(roots: &[PathBuf]) -> Vec<AppInfo> {
             });
         }
     }
-    apps
+    (apps, warnings)
 }
 
+pub use crate::app_profile::{AppChannel, AppScanReport};
 pub fn list_installed_apps() -> Vec<AppInfo> {
-    let mut apps = scan_bundles(&application_roots());
-    if let Ok(data) = brew_json(&["info", "--json=v2", "--installed"]) {
+    scan_installed_apps_report().apps
+}
+pub fn scan_installed_apps_report() -> AppScanReport {
+    scan_installed_apps_report_controlled(&|| false, |_, _, _| {})
+}
+pub fn scan_installed_apps_report_controlled(
+    cancelled: &dyn Fn() -> bool,
+    mut progress: impl FnMut(&str, u64, u64),
+) -> AppScanReport {
+    let (mut apps, mut warnings) =
+        scan_bundles_report(&application_roots(), cancelled, &mut progress);
+    let mut channels = vec![AppChannel {
+        id: "app".into(),
+        status: if warnings.is_empty() {
+            "ok".into()
+        } else {
+            "partial".into()
+        },
+        count: Some(apps.len()),
+        note: "已读取 Applications 中的应用包；未读取目录的数量未知".into(),
+    }];
+    let brew = if cancelled() {
+        Err("应用扫描已停止".into())
+    } else {
+        brew_json(&["info", "--json=v2", "--installed"])
+    };
+    if let Ok(data) = &brew {
         let mut cask_apps = HashMap::new();
         if let Some(casks) = data["casks"].as_array() {
             for cask in casks {
-                if let Some(artifacts) = cask["artifacts"].as_array() {
-                    for artifact in artifacts {
-                        if let Some(name) = artifact["app"].get(0).and_then(Value::as_str) {
-                            cask_apps.insert(
-                                PathBuf::from(name)
-                                    .file_name()
-                                    .unwrap_or_default()
-                                    .to_string_lossy()
-                                    .into_owned(),
-                                cask["token"].as_str().unwrap_or("").to_string(),
-                            );
+                if cancelled() {
+                    break;
+                }
+                if let Some(token) = cask["token"].as_str().filter(|t| !t.is_empty()) {
+                    match installed_cask_apps(token) {
+                        Ok(paths) => {
+                            if paths.len() == 1 {
+                                cask_apps.insert(paths[0].clone(), token.to_string());
+                            } else {
+                                warnings.push(format!(
+                                    "{token} 的应用包产物不唯一，不能将同一 Cask 标识分配给多个应用"
+                                ));
+                                for app in &mut apps {
+                                    if fs::canonicalize(&app.install_path)
+                                        .is_ok_and(|path| paths.contains(&path))
+                                    {
+                                        app.can_uninstall = false;
+                                        app.uninstall_note="Homebrew 安装包含多个应用包，请在原渠道查看完整范围后卸载".into();
+                                    }
+                                }
+                            }
                         }
+                        Err(error) => warnings.push(format!("{token} Cask 安装产物未知：{error}")),
                     }
                 }
             }
         }
-        for app in &mut apps {
-            if let Some(token) = Path::new(&app.key)
-                .file_name()
-                .and_then(|n| cask_apps.get(n.to_string_lossy().as_ref()))
-                && !app.is_system
-                && !token.is_empty()
-            {
-                app.key = token.clone();
-                app.pkg_type = "brew-cask".into();
-            }
-        }
+        assign_casks(&mut apps, &cask_apps);
         if let Some(formulae) = data["formulae"].as_array() {
             for formula in formulae {
                 let Some(name) = formula["name"].as_str() else {
@@ -182,44 +290,89 @@ pub fn list_installed_apps() -> Vec<AppInfo> {
             .cmp(&a.has_ui)
             .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
     });
-    apps
+    match brew {
+        Ok(_) => channels.push(AppChannel {
+            id: "brew".into(),
+            status: "ok".into(),
+            count: Some(
+                apps.iter()
+                    .filter(|a| a.pkg_type.starts_with("brew"))
+                    .count(),
+            ),
+            note: "统计已匹配 Cask 与手动安装的 Formula".into(),
+        }),
+        Err(error) => {
+            let status = if cancelled() {
+                "cancelled"
+            } else if platform::command_path("brew").is_none() {
+                "unavailable"
+            } else {
+                "failed"
+            };
+            if status != "unavailable" {
+                warnings.push(error.clone());
+            }
+            channels.push(AppChannel {
+                id: "brew".into(),
+                status: status.into(),
+                count: None,
+                note: error,
+            });
+        }
+    }
+    let report = AppScanReport {
+        apps,
+        channels,
+        warnings,
+        checked_at: chrono::Utc::now().to_rfc3339(),
+    };
+    crate::app_profile::save_inventory(&report);
+    report
 }
 
-pub fn uninstall_package(pkg_type: &str, key: &str) -> Result<String, String> {
-    if pkg_type == "app" {
-        let path = fs::canonicalize(key).map_err(|e| e.to_string())?;
-        let permitted = path.starts_with("/Applications")
-            || platform::home().is_some_and(|h| path.starts_with(h.join("Applications")));
-        if !permitted
-            || path.extension().is_none_or(|s| s != "app")
-            || !list_installed_apps()
-                .iter()
-                .any(|a| a.pkg_type == "app" && !a.is_system && Path::new(&a.key) == Path::new(key))
-        {
-            return Err("只能卸载应用列表中的非系统应用".into());
-        }
-        // Arguments are passed to AppleScript directly; no shell or script interpolation.
-        platform::checked_output(Command::new("/usr/bin/osascript").args(["-e", "on run argv\ntell application \"Finder\" to delete POSIX file (item 1 of argv)\nend run"]).arg(path))?;
-        return Ok("应用已移入废纸篓；应用文档及配置保留".into());
+pub fn uninstall_package(_pkg_type: &str, _key: &str) -> Result<String, String> {
+    Err("卸载需要先生成并确认影响预览，请刷新应用列表".into())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn cask_ownership_uses_full_installed_path_and_keeps_same_name_copies() {
+        let root = std::env::temp_dir().join(format!(
+            "cleaner-cask-{}-{}",
+            std::process::id(),
+            chrono::Utc::now().timestamp_nanos_opt().unwrap()
+        ));
+        let installed = root.join("Applications/Editor.app");
+        let copy = root.join("UserApplications/Editor.app");
+        fs::create_dir_all(&installed).unwrap();
+        fs::create_dir_all(&copy).unwrap();
+        let tracked = cask_artifact_paths(&format!(
+            "{}\nrelative/Editor.app\nmetadata not a path\n",
+            installed.display()
+        ));
+        assert_eq!(tracked, vec![fs::canonicalize(&installed).unwrap()]);
+        let ownership = HashMap::from([(tracked[0].clone(), "editor".into())]);
+        let mut apps = vec![
+            AppInfo {
+                key: installed.to_string_lossy().into_owned(),
+                install_path: installed.to_string_lossy().into_owned(),
+                pkg_type: "app".into(),
+                ..AppInfo::default()
+            },
+            AppInfo {
+                key: copy.to_string_lossy().into_owned(),
+                install_path: copy.to_string_lossy().into_owned(),
+                pkg_type: "app".into(),
+                ..AppInfo::default()
+            },
+        ];
+        assign_casks(&mut apps, &ownership);
+        assert_eq!(apps[0].pkg_type, "brew-cask");
+        assert_eq!(apps[0].key, "editor");
+        assert_eq!(apps[1].pkg_type, "app");
+        assert_eq!(apps[1].key, copy.to_string_lossy());
+        fs::remove_dir_all(root).unwrap();
     }
-    platform::validate_package_key(key)?;
-    if !matches!(pkg_type, "brew" | "brew-cask")
-        || !list_installed_apps()
-            .iter()
-            .any(|a| a.pkg_type == pkg_type && a.key == key && !a.is_system)
-    {
-        return Err("未找到可卸载的 Homebrew 应用".into());
-    }
-    let brew = platform::command_path("brew").ok_or("未安装 Homebrew")?;
-    platform::checked_output(Command::new(brew).args([
-        "uninstall",
-        if pkg_type == "brew-cask" {
-            "--cask"
-        } else {
-            "--formula"
-        },
-        "--",
-        key,
-    ]))?;
-    Ok(format!("已卸载 {key}"))
 }

@@ -1,6 +1,7 @@
 import { createRouter, createWebHashHistory } from 'vue-router';
 
 const routes = [
+  { path: '/monitor', name: 'Monitor', component: () => import('../views/MonitorView.vue'), meta: { title: '本机监控' } },
   { path: '/storage', name: 'Storage', component: () => import('../views/StorageView.vue'), meta: { title: '磁盘空间分析' } },
   {
     path: '/',

@@ -48,10 +48,17 @@ impl DevScan {
     }
 }
 
-fn aged_snapshot(path: &Path, cutoff: SystemTime) -> Result<Option<(u64, String)>, String> {
+fn aged_snapshot(
+    path: &Path,
+    cutoff: SystemTime,
+    cancelled: &dyn Fn() -> bool,
+) -> Result<Option<(u64, String)>, String> {
     let mut entries = Vec::new();
     let mut size = 0u64;
     for entry in WalkDir::new(path) {
+        if cancelled() {
+            return Err("扫描已停止".into());
+        }
         let entry = entry.map_err(|e| e.to_string())?;
         let meta = fs::symlink_metadata(entry.path()).map_err(|e| e.to_string())?;
         let modified = meta.modified().map_err(|e| e.to_string())?;
@@ -119,6 +126,9 @@ pub fn old_enough(path: &Path, cutoff: SystemTime) -> Result<bool, String> {
 }
 
 fn protected_process_paths() -> Vec<PathBuf> {
+    protected_process_paths_controlled(&|| false)
+}
+fn protected_process_paths_controlled(cancelled: &dyn Fn() -> bool) -> Vec<PathBuf> {
     let mut paths = Vec::new();
     if let Ok(exe) = std::env::current_exe() {
         paths.push(exe);
@@ -129,6 +139,9 @@ fn protected_process_paths() -> Vec<PathBuf> {
             .flatten()
             .filter(|p| p.file_name().to_string_lossy().parse::<u32>().is_ok())
         {
+            if cancelled() {
+                break;
+            }
             if let Ok(exe) = fs::read_link(process.path().join("exe")) {
                 paths.push(exe);
             }
@@ -164,17 +177,37 @@ fn contains_protected(path: &Path, processes: &[PathBuf]) -> bool {
     processes.iter().any(|p| p.starts_with(path))
 }
 
+struct ScanSafety<'a> {
+    protected: &'a [PathBuf],
+    excluded: &'a [PathBuf],
+    cancelled: &'a dyn Fn() -> bool,
+}
+
 fn collect_candidate(
     path: PathBuf,
     name: &str,
     reason: &str,
     cutoff: SystemTime,
-    protected: &[PathBuf],
+    safety: &ScanSafety<'_>,
     seen: &mut HashSet<PathBuf>,
     output: &mut Vec<DevTarget>,
 ) -> Result<(), String> {
-    let Ok(meta) = fs::symlink_metadata(&path) else {
+    let ScanSafety {
+        protected,
+        excluded,
+        cancelled,
+    } = safety;
+    if cancelled()
+        || excluded
+            .iter()
+            .any(|root| path.starts_with(root) || root.starts_with(&path))
+    {
         return Ok(());
+    }
+    let meta = match fs::symlink_metadata(&path) {
+        Ok(meta) => meta,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(format!("{}: {error}", path.display())),
     };
     if meta.file_type().is_symlink() || (!meta.is_dir() && !meta.is_file()) {
         return Ok(());
@@ -183,7 +216,7 @@ fn collect_candidate(
     if contains_protected(&canonical, protected) || !seen.insert(canonical.clone()) {
         return Ok(());
     }
-    if let Some((size_bytes, fingerprint)) = aged_snapshot(&canonical, cutoff)? {
+    if let Some((size_bytes, fingerprint)) = aged_snapshot(&canonical, cutoff, cancelled)? {
         output.push(DevTarget {
             name: name.into(),
             path: canonical,
@@ -208,6 +241,21 @@ pub fn scan_with_progress(
     cache: &Path,
     project_root: Option<&Path>,
     min_age_days: u64,
+    report: impl FnMut(DevProgress),
+) -> Result<DevScan, String> {
+    let roots = project_root
+        .into_iter()
+        .map(Path::to_path_buf)
+        .collect::<Vec<_>>();
+    scan_controlled(home, cache, &roots, min_age_days, &[], &|| false, report)
+}
+pub fn scan_controlled(
+    home: &Path,
+    cache: &Path,
+    project_roots: &[PathBuf],
+    min_age_days: u64,
+    excluded: &[PathBuf],
+    cancelled: &dyn Fn() -> bool,
     mut report: impl FnMut(DevProgress),
 ) -> Result<DevScan, String> {
     if !(1..=365).contains(&min_age_days) {
@@ -216,7 +264,12 @@ pub fn scan_with_progress(
     let cutoff = SystemTime::now()
         .checked_sub(Duration::from_secs(min_age_days * 86400))
         .ok_or("保留时间无效")?;
-    let protected = protected_process_paths();
+    let protected = protected_process_paths_controlled(cancelled);
+    let safety = ScanSafety {
+        protected: &protected,
+        excluded,
+        cancelled,
+    };
     let mut result = DevScan::default();
     let mut seen = HashSet::new();
     for rule in rules() {
@@ -226,10 +279,16 @@ pub fn scan_with_progress(
             .map(|path| home.join(path))
             .chain(rule.cache_paths.iter().map(|path| cache.join(path)))
         {
+            if cancelled() {
+                break;
+            }
+            if excluded.iter().any(|path| root.starts_with(path)) {
+                continue;
+            }
             report(DevProgress {
                 path: root.to_string_lossy().into_owned(),
-                directories_scanned: 0,
-                projects_found: 0,
+                directories_scanned: result.directories_scanned,
+                projects_found: result.projects_found,
             });
             let entries = match fs::read_dir(&root) {
                 Ok(entries) => entries,
@@ -239,7 +298,11 @@ pub fn scan_with_progress(
                     continue;
                 }
             };
+            result.directories_scanned += 1;
             for entry in entries {
+                if cancelled() {
+                    break;
+                }
                 let entry = match entry {
                     Ok(entry) => entry,
                     Err(error) => {
@@ -252,7 +315,7 @@ pub fn scan_with_progress(
                     &rule.name,
                     &rule.description,
                     cutoff,
-                    &protected,
+                    &safety,
                     &mut seen,
                     &mut result.targets,
                 ) {
@@ -261,20 +324,37 @@ pub fn scan_with_progress(
             }
         }
     }
-    if let Some(root) = project_root {
-        let projects = scan_projects_with_limits(
+    for root in project_roots {
+        if cancelled() {
+            break;
+        }
+        let scanned_before = result.directories_scanned;
+        let projects_before = result.projects_found;
+        let mut project_report = |mut value: DevProgress| {
+            value.directories_scanned += scanned_before;
+            value.projects_found += projects_before;
+            report(value);
+        };
+        match scan_projects_controlled(
             root,
             cutoff,
-            &protected,
+            &safety,
             &mut seen,
             ScanLimits::default(),
-            &mut report,
-        )?;
-        result.targets.extend(projects.targets);
-        result.warnings.extend(projects.warnings);
-        result.storage_skipped += projects.storage_skipped;
-        result.directories_scanned = projects.directories_scanned;
-        result.projects_found = projects.projects_found;
+            &mut project_report,
+        ) {
+            Ok(projects) => {
+                result.targets.extend(projects.targets);
+                result.warnings.extend(projects.warnings);
+                result.storage_skipped += projects.storage_skipped;
+                result.directories_scanned += projects.directories_scanned;
+                result.projects_found += projects.projects_found;
+            }
+            Err(error) => result.warn(format!("{}: {error}", root.display())),
+        }
+    }
+    if cancelled() {
+        result.warn("扫描已停止，当前仅包含已完成统计的项目".into());
     }
     Ok(result)
 }
@@ -522,6 +602,32 @@ fn scan_projects_with_limits(
     limits: ScanLimits,
     report: &mut impl FnMut(DevProgress),
 ) -> Result<DevScan, String> {
+    scan_projects_controlled(
+        root,
+        cutoff,
+        &ScanSafety {
+            protected,
+            excluded: &[],
+            cancelled: &|| false,
+        },
+        seen,
+        limits,
+        report,
+    )
+}
+fn scan_projects_controlled(
+    root: &Path,
+    cutoff: SystemTime,
+    safety: &ScanSafety<'_>,
+    seen: &mut HashSet<PathBuf>,
+    limits: ScanLimits,
+    report: &mut impl FnMut(DevProgress),
+) -> Result<DevScan, String> {
+    let ScanSafety {
+        excluded,
+        cancelled,
+        ..
+    } = safety;
     let root = fs::canonicalize(root).map_err(|e| format!("项目目录无法访问: {e}"))?;
     if !root.is_dir()
         || root.parent().is_none()
@@ -550,6 +656,13 @@ fn scan_projects_with_limits(
     let mut last_report = start;
     let mut deep = 0;
     while let Some((directory, depth)) = queue.pop_front() {
+        if cancelled() {
+            result.warn("扫描已停止，尚有项目目录未覆盖".into());
+            break;
+        }
+        if excluded.iter().any(|root| directory.starts_with(root)) {
+            continue;
+        }
         if storage_roots.iter().any(|root| directory.starts_with(root)) {
             result.storage_skipped += 1;
             continue;
@@ -571,6 +684,9 @@ fn scan_projects_with_limits(
         let mut child_directories = Vec::new();
         let mut has_database_marker = false;
         for entry in entries {
+            if cancelled() {
+                break;
+            }
             let entry = match entry {
                 Ok(entry) => entry,
                 Err(error) => {
@@ -635,6 +751,9 @@ fn scan_projects_with_limits(
             result.projects_found += 1;
         }
         for (name, path) in artifacts {
+            if cancelled() {
+                break;
+            }
             if storage_roots.iter().any(|root| path.starts_with(root)) {
                 result.storage_skipped += 1;
                 continue;
@@ -644,7 +763,7 @@ fn scan_projects_with_limits(
                 name,
                 "可重新生成的项目产物；保留源码、锁文件、配置和 SDK；清理后需重新安装依赖或构建",
                 cutoff,
-                protected,
+                safety,
                 seen,
                 &mut result.targets,
             ) {
@@ -731,6 +850,40 @@ pub fn revalidate(path: &Path, days: u64, expected: &str) -> Result<(), String> 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn excluded_artifact_children_preserve_whole_target_and_snapshot_cancels_inside_walk() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let root = std::env::temp_dir().join(format!("cleaner-dev-control-{}", std::process::id()));
+        fs::create_dir_all(root.join("node_modules/nested")).unwrap();
+        fs::write(root.join("package.json"), "{}").unwrap();
+        fs::write(root.join("node_modules/nested/dependency"), b"generated").unwrap();
+        let report = scan_projects_controlled(
+            &root,
+            SystemTime::now() + Duration::from_secs(1),
+            &ScanSafety {
+                protected: &[],
+                excluded: &[root.join("node_modules/nested")],
+                cancelled: &|| false,
+            },
+            &mut HashSet::new(),
+            ScanLimits::default(),
+            &mut |_| {},
+        )
+        .unwrap();
+        assert!(report.targets.is_empty());
+        assert_eq!(report.projects_found, 1);
+        let checks = AtomicUsize::new(0);
+        assert!(
+            aged_snapshot(
+                &root.join("node_modules"),
+                SystemTime::now() + Duration::from_secs(1),
+                &|| checks.fetch_add(1, Ordering::SeqCst) >= 1
+            )
+            .unwrap_err()
+            .contains("停止")
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
     #[test]
     fn project_recognition_keeps_locks_sources_and_unmarked_build_folders() {
         let root = std::env::temp_dir().join(format!("appsteward-dev-test-{}", std::process::id()));
