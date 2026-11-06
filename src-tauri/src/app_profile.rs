@@ -119,15 +119,14 @@ pub fn profile(kind: &str, key: &str) -> Result<AppProfile, String> {
             .description
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || ".-_".contains(c))
+        && let Some(home) = platform::home()
     {
-        if let Some(home) = platform::home() {
-            roots.push(home.join("Library/Caches").join(&app.description));
-            roots.push(
-                home.join("Library/Containers")
-                    .join(&app.description)
-                    .join("Data/Library/Caches"),
-            );
-        }
+        roots.push(home.join("Library/Caches").join(&app.description));
+        roots.push(
+            home.join("Library/Containers")
+                .join(&app.description)
+                .join("Data/Library/Caches"),
+        );
     }
     for root in roots {
         if root.is_dir() && fs::symlink_metadata(&root).is_ok_and(|m| !m.file_type().is_symlink()) {

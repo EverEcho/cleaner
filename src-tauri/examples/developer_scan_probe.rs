@@ -1,7 +1,7 @@
 fn main() {
     let root = std::env::args().nth(1).expect("project root");
     let start = std::time::Instant::now();
-    let category = tauri_app_lib::cleaner::scan_developer_junk(Some(&root), 7, |_| {}).unwrap();
+    let category = appclear_lib::cleaner::scan_developer_junk(Some(&root), 7, |_| {}).unwrap();
     let warning = category.warning.clone();
     println!(
         "root={root} elapsed_seconds={:.2} targets={} displayed_groups={} known_bytes={} warning={} summary={}",

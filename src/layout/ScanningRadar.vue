@@ -46,14 +46,14 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
-.scanner-overlay { width: 100%; min-height: 390px; flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; position: relative; background: radial-gradient(ellipse at 50% 35%, #a78bfa08, transparent 60%); padding: 20px 16px 32px; user-select: none; }
+.scanner-overlay { width: 100%; min-height: 390px; flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; position: relative; background: radial-gradient(ellipse at 50% 35%, rgba(var(--accent-rgb), 0.06), transparent 60%); padding: 20px 16px 32px; user-select: none; }
 .scanner-art { width: 250px; height: 250px; margin-top: -22px; margin-bottom: -13px; }
-.scanner-title { font-size: 19px; font-weight: 550; color: #ece6ff; letter-spacing: .1px; margin: 0 0 10px; text-align: center; }
+.scanner-title { font-size: 19px; font-weight: 550; color: var(--text); letter-spacing: .1px; margin: 0 0 10px; text-align: center; }
 .scanner-tip-box { min-height: 24px; display: flex; align-items: center; justify-content: center; margin-bottom: 21px; text-align: center; }
-.scanner-tip { font-size: 12px; color: #9693ad; line-height: 1.6; }
-.progress-track { width: 180px; height: 3px; background: #c0aaff12; border-radius: 99px; overflow: hidden; position: relative; }
-.progress-active { position: absolute; inset-block: 0; width: 40%; background: linear-gradient(90deg, #8b5fe9, #9eabf1, #64d5e9); border-radius: 99px; animation: progress-indeterminate 2s infinite ease-in-out; }
-.scanner-caption { font-size: 9px; letter-spacing: .5px; color: #736d88; margin-top: 13px; }
+.scanner-tip { font-size: 12px; color: var(--text-muted); line-height: 1.6; }
+.progress-track { width: 180px; height: 3px; background: var(--accent-soft); border-radius: 99px; overflow: hidden; position: relative; }
+.progress-active { position: absolute; inset-block: 0; width: 40%; background: linear-gradient(90deg, var(--accent-strong), var(--blue), var(--accent-strong)); border-radius: 99px; animation: progress-indeterminate 2s infinite ease-in-out; }
+.scanner-caption { font-size: 9px; letter-spacing: .5px; color: var(--text-faint); margin-top: 13px; }
 .fade-slide-enter-active, .fade-slide-leave-active { transition: opacity .25s ease, transform .25s ease; }
 .fade-slide-enter-from { opacity: 0; transform: translateY(5px); }
 .fade-slide-leave-to { opacity: 0; transform: translateY(-5px); }

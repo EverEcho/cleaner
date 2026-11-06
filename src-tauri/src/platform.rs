@@ -38,6 +38,38 @@ pub fn home() -> Option<PathBuf> {
         .map(PathBuf::from)
 }
 
+// Resolve existing aliases even when the final path has not been created yet.
+pub(crate) fn normalized_absolute(path: &Path) -> Result<PathBuf, String> {
+    if !path.is_absolute() {
+        return Err("保留路径需要绝对路径".into());
+    }
+    match std::fs::canonicalize(path) {
+        Ok(path) => return Ok(path),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(format!("无法核对保留路径 {}: {error}", path.display())),
+    }
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            std::path::Component::ParentDir => {
+                normalized.pop();
+            }
+            std::path::Component::CurDir => {}
+            other => {
+                normalized.push(other.as_os_str());
+                match std::fs::canonicalize(&normalized) {
+                    Ok(path) => normalized = path,
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(error) => {
+                        return Err(format!("无法核对保留路径 {}: {error}", path.display()));
+                    }
+                }
+            }
+        }
+    }
+    Ok(normalized)
+}
+
 pub fn xdg_dir(variable: &str, fallback: &str) -> Option<PathBuf> {
     std::env::var_os(variable)
         .map(PathBuf::from)
@@ -97,6 +129,23 @@ pub fn checked_output(command: &mut Command) -> Result<Output, String> {
     }
 }
 
+const MACOS_TRASH_SCRIPT: &str = "on run argv\nset targetItem to (POSIX file (item 1 of argv)) as alias\ntell application \"Finder\" to delete targetItem\nend run";
+
+pub(crate) fn move_to_trash(path: &Path) -> Result<Output, String> {
+    if cfg!(target_os = "macos") {
+        // Resolve the file in AppleScript's scope before sending its alias to Finder.
+        // Pass the path as an argument so spaces, quotes and Unicode stay literal.
+        checked_output(
+            Command::new("/usr/bin/osascript")
+                .args(["-e", MACOS_TRASH_SCRIPT])
+                .arg(path),
+        )
+    } else {
+        let gio = command_path("gio").ok_or("系统未提供回收站工具 gio")?;
+        checked_output(Command::new(gio).args(["trash", "--"]).arg(path))
+    }
+}
+
 pub fn validate_package_key(key: &str) -> Result<(), String> {
     if key.is_empty()
         || key.starts_with('-')
@@ -112,6 +161,79 @@ pub fn validate_package_key(key: &str) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn trash_script_resolves_literal_paths_before_finder() {
+        let root =
+            std::env::temp_dir().join(format!("appclear-trash-alias-{}", std::process::id()));
+        let app = root.join("测试 IntelliJ \"IDEA\" 'sample'.app");
+        std::fs::create_dir_all(&app).unwrap();
+        // Exercise the production script's path conversion without moving anything.
+        let script = MACOS_TRASH_SCRIPT.replace(
+            "tell application \"Finder\" to delete targetItem",
+            "return POSIX path of targetItem",
+        );
+        assert_ne!(script, MACOS_TRASH_SCRIPT);
+        let output = checked_output(
+            Command::new("/usr/bin/osascript")
+                .args(["-e", &script])
+                .arg(&app),
+        )
+        .unwrap();
+        assert_eq!(
+            std::fs::canonicalize(String::from_utf8(output.stdout).unwrap().trim()).unwrap(),
+            std::fs::canonicalize(&app).unwrap()
+        );
+        assert!(
+            checked_output(
+                Command::new("/usr/bin/osascript")
+                    .args(["-e", &script])
+                    .arg(root.join("missing.app"))
+            )
+            .is_err()
+        );
+        assert!(app.is_dir());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    #[ignore = "Moves only generated fixtures to Finder Trash; requires a desktop session"]
+    fn finder_trashes_disposable_fixtures() {
+        let root =
+            std::env::temp_dir().join(format!("appclear-trash-fixtures-{}", std::process::id()));
+        let app = root.join("AppClear 测试 \"IDEA\".app");
+        let file = root.join("AppClear 测试 'file'.txt");
+        std::fs::create_dir_all(app.join("Contents")).unwrap();
+        std::fs::write(app.join("Contents/fixture"), b"test app").unwrap();
+        std::fs::write(&file, b"test file").unwrap();
+        for path in [&app, &file] {
+            move_to_trash(path).unwrap();
+            assert!(!path.exists(), "Fixture was not moved: {}", path.display());
+        }
+        // Finder may leave .DS_Store in the fixture's parent directory.
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn missing_protected_paths_resolve_existing_directory_aliases() {
+        let root = std::env::temp_dir().join(format!("appclear-paths-{}", std::process::id()));
+        std::fs::create_dir_all(root.join("actual/keep")).unwrap();
+        std::os::unix::fs::symlink(root.join("actual"), root.join("alias")).unwrap();
+        let actual = std::fs::canonicalize(root.join("actual")).unwrap();
+        assert_eq!(
+            normalized_absolute(&root.join("alias/keep/../missing/child")).unwrap(),
+            actual.join("missing/child")
+        );
+        assert_eq!(
+            normalized_absolute(&root.join("alias/keep")).unwrap(),
+            actual.join("keep")
+        );
+        assert!(normalized_absolute(Path::new("relative/missing")).is_err());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
     #[test]
     fn package_arguments_cannot_be_options_or_shell_commands() {
         for key in ["", "--all", "foo;rm", "foo bar", "$(id)", "foo\nbar"] {

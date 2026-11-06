@@ -1,6 +1,8 @@
-# 软件管家
+# AppClear
 
-Tauri 2、Vue 3、Rust 实现的 Linux / macOS 桌面软件管家。两个平台共用原创的深紫界面、紫青轨道主视觉与常驻工具导航。Windows 只做[支持计划](docs/windows-plan.md)，尚未实施。
+Tauri 2、Vue 3、Rust 实现的 Linux / macOS 桌面清理工具 AppClear。两个平台共用紫青轨道主视觉与常驻工具导航。左侧底部可切换深色、浅色或跟随系统主题，选择在本机保存；浅色使用白底深色字，深色提高辅助文字和控件对比度。Windows 只做[支持计划](docs/windows-plan.md)，尚未实施。
+
+应用名称为 `AppClear`，应用标识与 Linux Polkit 操作 ID 为 `cn.bit13.app.clear`，主程序为 `appclear`。更改标识后，设置使用新标识对应的目录，不自动迁移旧设置；已有 Linux 安装需重新生成菜单入口和授权组件。
 
 界面以 CleanMyMac 的桌面工具质感作为方向参考，独立实现布局、SVG 与动画。切换工具时保留扫描结果、筛选和选择；开始扫描、检查详情、确认处理三个步骤分开。所有容量与列表均来自本机检测，浏览器预览明确显示桌面端未连接。支持减少动态效果，并适配最小 900 × 580 窗口。
 
@@ -110,7 +112,7 @@ pnpm install --frozen-lockfile
 ./run.sh uninstall
 ```
 
-脚本可从任意目录调用。Linux 安装用户级菜单入口；macOS 安装到 `~/Applications/软件管家.app`，旧应用移入废纸篓。Linux 支持 DEB/RPM/AppImage，macOS 支持 APP/DMG，须在对应系统构建。例如 `./run.sh build --bundles deb`。Mac 发布签名、公证和真实设备验收仍需完成。
+脚本可从任意目录调用。Linux 安装用户级菜单入口；macOS 安装到 `~/Applications/AppClear.app`，旧应用移入废纸篓。Linux 支持 DEB/RPM/AppImage，macOS 支持 APP/DMG，须在对应系统构建。例如 `./run.sh build --bundles deb`。Mac 发布签名、公证和真实设备验收仍需完成。
 
 ## 主动授权与会话缓存
 

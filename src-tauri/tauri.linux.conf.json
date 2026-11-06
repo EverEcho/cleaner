@@ -6,7 +6,7 @@
       "appimage"
     ],
     "resources": {
-      "helper/target/release/appsteward-helper": "appsteward-helper"
+      "helper/target/release/appclear-helper": "appclear-helper"
     }
   }
 }

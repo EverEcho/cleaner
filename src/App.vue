@@ -4,6 +4,7 @@ import { isTauri } from '@tauri-apps/api/core';
 import { ElMessage } from 'element-plus';
 import { Sparkles, Trash2, HardDrive, AppWindow, ArrowUpCircle, Power, PanelsTopLeft, Files, Copy, Monitor, ChevronRight,Activity } from 'lucide-vue-next';
 import WindowBar from './layout/WindowBar.vue';
+import ThemeSwitcher from './components/ThemeSwitcher.vue';
 import { loadPlatform, platformInfo } from './platform';
 import TaskStatusBar from './layout/TaskStatusBar.vue';
 import { initializeTasks,disposeTasks } from './tasks';
@@ -39,9 +40,9 @@ onUnmounted(()=>{disposeTasks();stopMonitor();});
     <WindowBar />
     <div class="workspace">
       <aside class="sidebar" aria-label="工具导航">
-        <router-link to="/" class="brand" aria-label="Cleaner 空间概览">
+        <router-link to="/" class="brand" aria-label="AppClear 空间概览">
           <span class="brand-symbol" aria-hidden="true"><Sparkles :size="23" :stroke-width="1.7" /></span>
-          <span class="brand-name">Cleaner<small>软件管家</small></span>
+          <span class="brand-name">AppClear<small>本机清理助手</small></span>
         </router-link>
         <nav class="navigation">
           <div v-for="group in groups" :key="group.label" class="nav-group">
@@ -53,6 +54,7 @@ onUnmounted(()=>{disposeTasks();stopMonitor();});
             </router-link>
           </div>
         </nav>
+        <ThemeSwitcher />
         <div class="machine-card">
           <span class="machine-icon"><Monitor :size="19" :stroke-width="1.6" aria-hidden="true" /></span>
           <div><strong>{{ systemLabel }}</strong><small>{{ native ? '在本机，掌控你的空间' : '本机功能请在桌面端使用' }}</small></div>

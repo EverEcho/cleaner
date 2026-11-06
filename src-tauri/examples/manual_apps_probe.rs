@@ -1,5 +1,5 @@
 fn main() {
-    let apps = tauri_app_lib::packages::list_installed_apps();
+    let apps = appclear_lib::packages::list_installed_apps();
     let manual: Vec<_> = apps.iter().filter(|app| app.pkg_type == "manual").collect();
     println!("manual_apps={}", manual.len());
     for app in &manual {
@@ -12,7 +12,7 @@ fn main() {
         );
     }
     for app in manual.iter().filter(|app| app.can_uninstall) {
-        let plan = tauri_app_lib::manual_apps::plan(&app.key).expect("read-only uninstall preview");
+        let plan = appclear_lib::manual_apps::plan(&app.key).expect("read-only uninstall preview");
         println!(
             "preview_app={} items={} managed_ides={}",
             app.name,

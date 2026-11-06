@@ -2,14 +2,14 @@
 # Software Manager: common Linux / macOS development and run entry.
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-BIN="$ROOT/src-tauri/target/release/tauri-app"
+BIN="$ROOT/src-tauri/target/release/appclear"
 cd "$ROOT"
 case "$(uname -s)" in Linux|Darwin) ;; *) echo '当前实现支持 Linux 和 macOS；Windows 尚在规划中。'; exit 1 ;; esac
 ensure_bin() { [[ -x "$BIN" ]] || pnpm tauri build --no-bundle; }
 run_direct() { ensure_bin; exec "$BIN" "$@"; }
 run_installed() {
   "$ROOT/install.sh" "${1:-install}"
-  if [[ "$(uname -s)" == Darwin ]]; then exec open "$HOME/Applications/软件管家.app"; fi
+  if [[ "$(uname -s)" == Darwin ]]; then exec open "$HOME/Applications/AppClear.app"; fi
   run_direct
 }
 action="${1:-menu}"
@@ -23,7 +23,7 @@ case "$action" in
   uninstall) exec "$ROOT/install.sh" uninstall ;;
   authorize) exec "$ROOT/scripts/install-authorization.sh" "$@" ;;
   menu)
-    echo '软件管家 · Linux / macOS'
+    echo 'AppClear · Linux / macOS'
     echo '1) 直接运行  2) 安装并运行  3) 重新安装  4) 开发模式  5) 卸载入口  6) 配置会话授权缓存  0) 退出'
     read -rp '请选择 [默认 1]: ' choice
     case "${choice:-1}" in

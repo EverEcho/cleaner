@@ -1,7 +1,7 @@
 use crate::{admin_actions, platform};
 use std::{path::Path, process::Command};
 
-const HELPER: &str = "/usr/local/libexec/appsteward-helper";
+const HELPER: &str = "/usr/local/libexec/appclear-helper";
 
 pub fn session_cache_installed() -> bool {
     #[cfg(unix)]
@@ -15,7 +15,7 @@ pub fn session_cache_installed() -> bool {
             && secure(Path::new("/usr/local/libexec"))
             && secure(Path::new("/usr/local"))
             && secure(Path::new(
-                "/usr/share/polkit-1/actions/cn.workbuddy.appsteward.policy",
+                "/usr/share/polkit-1/actions/cn.bit13.app.clear.policy",
             ))
     }
     #[cfg(not(unix))]
@@ -195,10 +195,10 @@ pub fn authorize(app: &tauri::AppHandle) -> Result<String, String> {
         .path()
         .resource_dir()
         .ok()
-        .map(|p| p.join("appsteward-helper"));
+        .map(|p| p.join("appclear-helper"));
     let sibling = std::env::current_exe()
         .ok()
-        .and_then(|p| p.parent().map(|d| d.join("appsteward-helper")));
+        .and_then(|p| p.parent().map(|d| d.join("appclear-helper")));
     let source = bundled.into_iter().chain(sibling).find(|p| p.is_file());
     if !session_cache_installed() {
         let source = source.ok_or("应用缺少授权组件，请重新构建或安装应用")?;

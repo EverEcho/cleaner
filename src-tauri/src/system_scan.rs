@@ -459,7 +459,7 @@ mod tests {
     #[test]
     fn journal_plan_excludes_active_logs_and_keeps_newest_archives() {
         let root =
-            std::env::temp_dir().join(format!("appsteward-journal-test-{}", std::process::id()));
+            std::env::temp_dir().join(format!("appclear-journal-test-{}", std::process::id()));
         fs::create_dir_all(&root).unwrap();
         let old = root.join(
             "system@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-0000000000000001-0000000000000001.journal",

@@ -2,7 +2,7 @@ use crate::{models::format_size, platform};
 use serde::Serialize;
 use std::{
     fs,
-    path::{Component, Path, PathBuf},
+    path::{Path, PathBuf},
 };
 use walkdir::WalkDir;
 
@@ -60,27 +60,7 @@ fn same_device(_: &fs::Metadata, _: &fs::Metadata) -> bool {
 }
 
 fn normalized_absolute(path: &Path) -> Result<PathBuf, String> {
-    if !path.is_absolute() {
-        return Err("保留名单需要绝对路径".into());
-    }
-    match fs::canonicalize(path) {
-        Ok(path) => Ok(path),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            // Missing entries cannot contain counted files, but normalize their intended scope.
-            let mut normalized = PathBuf::new();
-            for component in path.components() {
-                match component {
-                    Component::ParentDir => {
-                        normalized.pop();
-                    }
-                    Component::CurDir => {}
-                    other => normalized.push(other.as_os_str()),
-                }
-            }
-            Ok(normalized)
-        }
-        Err(error) => Err(format!("无法核对保留路径 {}: {error}", path.display())),
-    }
+    platform::normalized_absolute(path)
 }
 
 pub fn analyze(root: &str) -> Result<DiskAnalysis, String> {
@@ -227,7 +207,9 @@ mod tests {
             assert_eq!(report.directories.len(), 1);
             assert_eq!(
                 report.directories[0].path,
-                actual.join("leaf").to_string_lossy()
+                fs::canonicalize(actual.join("leaf"))
+                    .unwrap()
+                    .to_string_lossy()
             );
             assert_eq!(report.directories[0].size_bytes, 6);
         }
@@ -242,7 +224,7 @@ mod tests {
         assert!(protected.warning.contains("保留名单"));
         assert_eq!(
             normalized_absolute(&actual.join("keep/../missing")).unwrap(),
-            actual.join("missing")
+            fs::canonicalize(&actual).unwrap().join("missing")
         );
         assert!(normalized_absolute(Path::new("relative/path")).is_err());
         fs::remove_dir_all(base).unwrap();

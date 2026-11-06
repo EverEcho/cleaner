@@ -1052,17 +1052,7 @@ pub fn trash_scanned_files_controlled(
     selected.sort();
     for path in selected {
         progress(&path.to_string_lossy(), report.items.len() as u64, total);
-        let result = if cfg!(target_os = "macos") {
-            platform::checked_output(std::process::Command::new("/usr/bin/osascript").args(["-e", "on run argv\ntell application \"Finder\" to delete POSIX file (item 1 of argv)\nend run"]).arg(&path))
-        } else if let Some(gio) = platform::command_path("gio") {
-            platform::checked_output(
-                std::process::Command::new(gio)
-                    .args(["trash", "--"])
-                    .arg(&path),
-            )
-        } else {
-            Err("系统未提供回收站工具 gio".into())
-        };
+        let result = platform::move_to_trash(&path);
         match result {
             Ok(_) => {
                 report_action(
@@ -1716,7 +1706,7 @@ mod tests {
     #[test]
     fn duplicate_cleanup_requires_an_unchanged_retained_copy() {
         let root =
-            std::env::temp_dir().join(format!("appsteward-duplicate-test-{}", std::process::id()));
+            std::env::temp_dir().join(format!("appclear-duplicate-test-{}", std::process::id()));
         fs::create_dir_all(&root).unwrap();
         let a = root.join("a");
         let b = root.join("b");
@@ -1742,8 +1732,7 @@ mod tests {
 
     #[test]
     fn cleanup_rejects_unscanned_paths_and_symlinks() {
-        let root =
-            std::env::temp_dir().join(format!("appsteward-clean-test-{}", std::process::id()));
+        let root = std::env::temp_dir().join(format!("appclear-clean-test-{}", std::process::id()));
         fs::create_dir_all(&root).unwrap();
         let cached = root.join("cache");
         let other = root.join("document");

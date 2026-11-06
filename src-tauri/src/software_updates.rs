@@ -1662,7 +1662,7 @@ mod tests {
     #[test]
     fn source_install_is_associated_with_active_wrapper_and_verified_origin() {
         let base =
-            std::env::temp_dir().join(format!("appsteward-updates-source-{}", std::process::id()));
+            std::env::temp_dir().join(format!("appclear-updates-source-{}", std::process::id()));
         let root = base.join("custom-hermes");
         fs::create_dir_all(root.join(".git/refs/heads")).unwrap();
         fs::create_dir_all(root.join(".git/objects")).unwrap();
@@ -1694,7 +1694,10 @@ mod tests {
             .into_iter()
             .find(|rule| rule.id == "hermes")
             .unwrap();
-        assert_eq!(source_root(&rule, &launcher), Some(root.clone()));
+        assert_eq!(
+            source_root(&rule, &launcher),
+            Some(fs::canonicalize(&root).unwrap())
+        );
         fs::write(
             root.join(".git/config"),
             "[remote \"origin\"]\nurl = https://github.com/other/hermes-agent.git\n",

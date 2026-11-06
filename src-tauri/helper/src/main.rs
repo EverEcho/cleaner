@@ -190,11 +190,11 @@ fn install_authorization() -> Result<(), String> {
         return Err("授权助手目录不安全".into());
     }
     let binary = fs::read("/proc/self/exe").map_err(|e| e.to_string())?;
-    atomic_install(dir, "appsteward-helper", &binary, 0o755)?;
+    atomic_install(dir, "appclear-helper", &binary, 0o755)?;
     atomic_install(
         Path::new("/usr/share/polkit-1/actions"),
-        "cn.workbuddy.appsteward.policy",
-        include_bytes!("../../../packaging/linux/cn.workbuddy.appsteward.policy"),
+        "cn.bit13.app.clear.policy",
+        include_bytes!("../../../packaging/linux/cn.bit13.app.clear.policy"),
         0o644,
     )?;
     println!("管理员授权组件已配置");

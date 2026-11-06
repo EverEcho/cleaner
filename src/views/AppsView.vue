@@ -125,7 +125,7 @@ onDeactivated(()=>{uninstallDialog.value=false;profileDialog.value=false;});
       <template #actions><el-button v-if="queue.length" @click="uninstallDialog=true"><ListChecks :size="15"/>卸载队列 {{ queue.length }}</el-button><el-button @click="loadApps" :loading="scanning" :disabled="!desktopAvailable||uninstalling"><RotateCw :size="15"/>刷新列表</el-button></template>
     </PageHeader>
     <div class="subpage-content">
-      <div v-if="!desktopAvailable" class="desktop-notice"><Monitor :size="38"/><h2>你的应用，一目了然</h2><p>请在 Cleaner 桌面应用中查看本机已安装软件。</p><span>浏览器预览不会读取应用列表</span></div>
+      <div v-if="!desktopAvailable" class="desktop-notice"><Monitor :size="38"/><h2>你的应用，一目了然</h2><p>请在 AppClear 桌面应用中查看本机已安装软件。</p><span>浏览器预览不会读取应用列表</span></div>
       <template v-else>
         <div v-if="scanning" class="scan-controls"><span>扫描在后台继续，可以切换页面</span><el-button v-if="activeTask('get_installed_apps_report')" @click="cancelTask(activeTask('get_installed_apps_report')!.id)">停止扫描</el-button></div>
         <ScanningRadar v-if="scanning&&!loaded" title="正在识别你的应用" sub-title="逐个读取安装渠道，并记录未能读取的范围" :tips="['读取桌面入口与独立安装结构…','核对系统包的手动安装标记…','识别 Flatpak 安装范围与完整应用标识…']"/>
@@ -184,59 +184,59 @@ onDeactivated(()=>{uninstallDialog.value=false;profileDialog.value=false;});
 </template>
 <style scoped>
 .source-select { width: 145px; }.sort-select { width: 130px; }
-.channel-strip { display:flex;gap:7px;align-items:center;flex-wrap:wrap;margin:0 0 14px; }.checked-time {font-size:10px;color:#8d80a0;margin-left:auto;}
-.coverage-warning {color:#d5ba90;background:#d5ba900b;border:1px solid #d5ba9028;border-radius:10px;padding:11px 14px;font-size:12px;line-height:1.7;margin-bottom:12px;overflow-wrap:anywhere;max-height:150px;overflow:auto;}.coverage-warning summary {cursor:pointer;}.coverage-warning p{margin:5px 0;}
-.scan-controls {display:flex;justify-content:space-between;align-items:center;font-size:12px;color:#a699bf;gap:12px;margin-bottom:12px;}
-.app-detail-link {border:0;background:transparent;padding:0;text-align:left;cursor:pointer;}.app-detail-link:hover{color:#cbb5ff;text-decoration:underline;}
-.queue-tabs {display:flex;gap:8px;overflow-x:auto;margin-bottom:15px;}.queue-tabs button {display:flex;flex-direction:column;gap:6px;flex-shrink:0;max-width:190px;text-align:left;padding:12px 15px;border-radius:10px;border:1px solid #ffffff13;background:#ffffff05;color:#b6a7cc;cursor:pointer;}.queue-tabs button.active{border-color:#ad90ed60;background:#ad90ed15;}.queue-tabs strong{font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}.queue-tabs span{font-size:10px;color:#a190ba;}
-.profile-body {min-height:130px;}.profile-id{display:flex;align-items:center;gap:14px;color:#bba1f1;}.profile-id>div{display:flex;flex-direction:column;gap:6px;}.profile-id strong{font-size:20px;color:#eee4ff;}.profile-id span{font-size:12px;color:#998aac;}.profile-path{font-size:12px;color:#b9abcb;overflow-wrap:anywhere;user-select:text;}.profile-body h3{font-size:14px;color:#e0d2f5;margin:23px 0 10px;}.profile-related{display:flex;align-items:center;gap:12px;padding:12px;border:1px solid #ffffff0d;border-radius:10px;margin-bottom:7px;}.profile-related>div{flex:1;min-width:0;display:flex;flex-direction:column;gap:5px;}.profile-related strong{font-size:12px;color:#cbbbdf;}.profile-related span{font-size:11px;color:#9180a3;overflow-wrap:anywhere;user-select:text;}.profile-note{display:flex;align-items:flex-start;gap:7px;font-size:11px;color:#8a7b9b;line-height:1.7;}.profile-note svg{flex-shrink:0;margin-top:3px;}
+.channel-strip { display:flex;gap:7px;align-items:center;flex-wrap:wrap;margin:0 0 14px; }.checked-time {font-size:10px;color:var(--text-faint);margin-left:auto;}
+.coverage-warning {color:var(--warning);background:var(--warning-soft);border:1px solid var(--warning-border);border-radius:10px;padding:11px 14px;font-size:12px;line-height:1.7;margin-bottom:12px;overflow-wrap:anywhere;max-height:150px;overflow:auto;}.coverage-warning summary {cursor:pointer;}.coverage-warning p{margin:5px 0;}
+.scan-controls {display:flex;justify-content:space-between;align-items:center;font-size:12px;color:var(--text-muted);gap:12px;margin-bottom:12px;}
+.app-detail-link {border:0;background:transparent;padding:0;text-align:left;cursor:pointer;}.app-detail-link:hover{color:var(--accent);text-decoration:underline;}
+.queue-tabs {display:flex;gap:8px;overflow-x:auto;margin-bottom:15px;}.queue-tabs button {display:flex;flex-direction:column;gap:6px;flex-shrink:0;max-width:190px;text-align:left;padding:12px 15px;border-radius:10px;border:1px solid var(--line);background:var(--surface-subtle);color:var(--text-secondary);cursor:pointer;}.queue-tabs button.active{border-color:var(--accent-border);background:var(--accent-soft);}.queue-tabs strong{font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}.queue-tabs span{font-size:10px;color:var(--text-muted);}
+.profile-body {min-height:130px;}.profile-id{display:flex;align-items:center;gap:14px;color:var(--accent);}.profile-id>div{display:flex;flex-direction:column;gap:6px;}.profile-id strong{font-size:20px;color:var(--text);}.profile-id span{font-size:12px;color:var(--text-muted);}.profile-path{font-size:12px;color:var(--text-secondary);overflow-wrap:anywhere;user-select:text;}.profile-body h3{font-size:14px;color:var(--text);margin:23px 0 10px;}.profile-related{display:flex;align-items:center;gap:12px;padding:12px;border:1px solid var(--line);border-radius:10px;margin-bottom:7px;}.profile-related>div{flex:1;min-width:0;display:flex;flex-direction:column;gap:5px;}.profile-related strong{font-size:12px;color:var(--text-secondary);}.profile-related span{font-size:11px;color:var(--text-faint);overflow-wrap:anywhere;user-select:text;}.profile-note{display:flex;align-items:flex-start;gap:7px;font-size:11px;color:var(--text-faint);line-height:1.7;}.profile-note svg{flex-shrink:0;margin-top:3px;}
 :deep(.el-button svg.lucide) { margin-right: 6px; flex-shrink: 0; }
-.subpage-container { display: flex; flex-direction: column; height: 100%; min-width: 0; color: #f1efff; background: transparent; }
+.subpage-container { display: flex; flex-direction: column; height: 100%; min-width: 0; color: var(--text); background: transparent; }
 .subpage-content { display: flex; flex-direction: column; flex: 1; min-height: 0; padding: 16px 28px 28px; overflow: hidden; position: relative; }
 .table-container { display: flex; flex-direction: column; flex: 1; min-height: 0; }
-.apps-summary { display: grid; grid-template-columns: 1fr 1fr 1.15fr; border: 1px solid #ffffff0c; border-radius: 16px; background: #ffffff03; padding: 22px 0; margin-bottom: 24px; }
-.summary-stat { display: flex; align-items: center; gap: 13px; padding: 0 20px; border-left: 1px solid #ffffff0a; }
+.apps-summary { display: grid; grid-template-columns: 1fr 1fr 1.15fr; border: 1px solid var(--line); border-radius: 16px; background: var(--surface-subtle); padding: 22px 0; margin-bottom: 24px; }
+.summary-stat { display: flex; align-items: center; gap: 13px; padding: 0 20px; border-left: 1px solid var(--line); }
 .summary-stat:first-child { border-left: 0; }
-.summary-icon { display: grid; place-items: center; width: 39px; height: 39px; flex-shrink: 0; border-radius: 12px; background: #a78bfa14; color: #b5a0ee; }
-.summary-icon.cyan { background: #64d5e910; color: #64d5e9; }
-.summary-icon.soft { background: #96a7f414; color: #96a7f4; }
+.summary-icon { display: grid; place-items: center; width: 39px; height: 39px; flex-shrink: 0; border-radius: 12px; background: var(--accent-soft); color: var(--accent); }
+.summary-icon.cyan { background: var(--cyan-soft); color: var(--cyan); }
+.summary-icon.soft { background: var(--blue-soft); color: var(--blue); }
 .summary-stat > div { display: flex; flex-direction: column; gap: 6px; }
 .summary-stat strong { font-size: 23px; line-height: 1; font-weight: 550; letter-spacing: -.5px; white-space: nowrap; }
-.summary-stat > div > span { font-size: 10px; color: #92879f; }
+.summary-stat > div > span { font-size: 10px; color: var(--text-faint); }
 .apps-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 15px; flex-wrap: wrap; }
 .app-search { width: 235px; flex-shrink: 0; }
-.app-search :deep(.el-input__prefix) { color: #8e80a6; }
-.list-meta { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin: 20px 2px 12px; font-size: 10px; color: #8f849f; }
-.list-meta span:last-child { display: flex; align-items: center; gap: 5px; color: #64d5e99e; }
-.app-list { flex: 1; min-height: 0; overflow: hidden; border: 1px solid #ffffff0c; border-radius: 13px; background: #ffffff02; }
+.app-search :deep(.el-input__prefix) { color: var(--text-faint); }
+.list-meta { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin: 20px 2px 12px; font-size: 10px; color: var(--text-faint); }
+.list-meta span:last-child { display: flex; align-items: center; gap: 5px; color: var(--cyan); }
+.app-list { flex: 1; min-height: 0; overflow: hidden; border: 1px solid var(--line); border-radius: 13px; background: var(--surface-subtle); }
 .app-identity { display: flex; align-items: center; gap: 12px; min-width: 0; padding: 3px 0; }
 .app-icon { width: 39px; height: 39px; object-fit: contain; flex-shrink: 0; }
-.app-icon-fallback { display: grid; place-items: center; border-radius: 11px; background: linear-gradient(145deg, #a78bfa20, #a78bfa0c); color: #b5a0ee; border: 1px solid #a78bfa1c; }
+.app-icon-fallback { display: grid; place-items: center; border-radius: 11px; background: linear-gradient(145deg, rgba(var(--accent-rgb), 0.13), rgba(var(--accent-rgb), 0.06)); color: var(--accent); border: 1px solid var(--accent-border); }
 .app-name-cell { min-width: 0; display: flex; flex-direction: column; gap: 5px; }
 .app-display-name, .app-pkg-name { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-.app-display-name { font-weight: 500; color: #e9e0f6; font-size: 12px; }
-.app-pkg-name { font-size: 10px; color: #877a9b; }
-.uninstall-progress { padding: 16px 18px; margin-bottom: 16px; border: 1px solid #a78bfa26; background: #a78bfa0a; border-radius: 12px; }
+.app-display-name { font-weight: 500; color: var(--text); font-size: 12px; }
+.app-pkg-name { font-size: 10px; color: var(--text-faint); }
+.uninstall-progress { padding: 16px 18px; margin-bottom: 16px; border: 1px solid var(--accent-border); background: var(--accent-soft); border-radius: 12px; }
 .uninstall-progress > div:first-child { display: flex; justify-content: space-between; margin-bottom: 12px; font-size: 12px; }
-.uninstall-progress strong { font-weight: 500; color: #c6b0f3; }
-.uninstall-progress p { margin: 10px 0 0; font-size: 11px; color: #9c8daf; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.uninstall-progress strong { font-weight: 500; color: var(--accent); }
+.uninstall-progress p { margin: 10px 0 0; font-size: 11px; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .uninstall-preview { min-height: 110px; }
-.uninstall-note { color: #a296b4; font-size: 12px; line-height: 1.8; }
-.uninstall-summary { color: #c7acf7; font-size: 13px; padding: 12px 14px; background: #a78bfa10; border-radius: 8px; }
-.uninstall-items { max-height: 330px; overflow: auto; border: 1px solid #ffffff0b; border-radius: 10px; }
-.uninstall-item { display: flex; gap: 12px; align-items: center; padding: 12px 14px; border-top: 1px solid #ffffff08; }
+.uninstall-note { color: var(--text-muted); font-size: 12px; line-height: 1.8; }
+.uninstall-summary { color: var(--accent); font-size: 13px; padding: 12px 14px; background: var(--accent-soft); border-radius: 8px; }
+.uninstall-items { max-height: 330px; overflow: auto; border: 1px solid var(--line); border-radius: 10px; }
+.uninstall-item { display: flex; gap: 12px; align-items: center; padding: 12px 14px; border-top: 1px solid var(--line); }
 .uninstall-item:first-child { border-top: 0; }
 .uninstall-item-copy { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 5px; }
-.uninstall-item-copy strong { display: flex; gap: 8px; align-items: center; font-size: 13px; font-weight: 500; color: #e4daf1; }
-.uninstall-item-copy span { font-size: 11px; color: #91829f; overflow-wrap: anywhere; user-select: text; }
-.uninstall-size { width: 85px; text-align: right; font-size: 12px; color: #b0a0c3; font-variant-numeric: tabular-nums; }
+.uninstall-item-copy strong { display: flex; gap: 8px; align-items: center; font-size: 13px; font-weight: 500; color: var(--text); }
+.uninstall-item-copy span { font-size: 11px; color: var(--text-faint); overflow-wrap: anywhere; user-select: text; }
+.uninstall-size { width: 85px; text-align: right; font-size: 12px; color: var(--text-muted); font-variant-numeric: tabular-nums; }
 .load-error { display: flex; flex-direction: column; align-items: center; justify-content: center; flex: 1; min-height: 220px; text-align: center; padding: 24px 20px; }
-.load-error > span { display: grid; place-items: center; width: 66px; height: 66px; border: 1px solid #dfb77b20; border-radius: 21px; color: #dfb77b; background: #dfb77b0b; }
-.load-error h2 { font-size: 18px; font-weight: 500; color: #e7ddf4; margin: 19px 0 10px; }
-.load-error p { font-size: 12px; color: #9583aa; line-height: 1.8; max-width: 500px; overflow-wrap: anywhere; user-select: text; margin: 0 0 20px; }
-.desktop-notice { display: flex; flex-direction: column; align-items: center; justify-content: center; flex: 1; text-align: center; padding: 40px 20px; color: #a78bfa; }
-.desktop-notice h2 { font-size: 19px; font-weight: 500; color: #e5dcf6; margin: 20px 0 9px; }
-.desktop-notice p { color: #9486ac; font-size: 13px; margin: 0; }
-.desktop-notice span { margin-top: 10px; color: #6e637f; font-size: 11px; }
+.load-error > span { display: grid; place-items: center; width: 66px; height: 66px; border: 1px solid var(--warning-border); border-radius: 21px; color: var(--warning); background: var(--warning-soft); }
+.load-error h2 { font-size: 18px; font-weight: 500; color: var(--text); margin: 19px 0 10px; }
+.load-error p { font-size: 12px; color: var(--text-faint); line-height: 1.8; max-width: 500px; overflow-wrap: anywhere; user-select: text; margin: 0 0 20px; }
+.desktop-notice { display: flex; flex-direction: column; align-items: center; justify-content: center; flex: 1; text-align: center; padding: 40px 20px; color: var(--accent); }
+.desktop-notice h2 { font-size: 19px; font-weight: 500; color: var(--text); margin: 20px 0 9px; }
+.desktop-notice p { color: var(--text-muted); font-size: 13px; margin: 0; }
+.desktop-notice span { margin-top: 10px; color: var(--text-faint); font-size: 11px; }
 @media (max-width: 900px) { .subpage-content { padding: 16px 20px 22px; } .summary-stat { padding: 0 15px; gap: 10px; } .summary-icon { width: 33px; height: 33px; } .summary-stat strong { font-size: 20px; } .apps-toolbar { gap: 10px; } .app-search { width: 220px; } }
 </style>

@@ -38,9 +38,9 @@ async function remove(path: string, exclusion = false) {
   </details>
 </template>
 <style scoped>
-.scan-scope { margin-bottom: 18px; border: 1px solid #ffffff14; background: #ffffff04; border-radius: 14px; padding: 14px 16px; color: #c7bedb; font-size: 12px; }
-summary { cursor: pointer; } summary span { color: #8f85a4; font-size: 11px; margin-left: 12px; } p { color: #8f85a4; font-size: 11px; line-height: 1.7; }
+.scan-scope { margin-bottom: 18px; border: 1px solid var(--line); background: var(--surface-subtle); border-radius: 14px; padding: 14px 16px; color: var(--text-secondary); font-size: 12px; }
+summary { cursor: pointer; } summary span { color: var(--text-faint); font-size: 11px; margin-left: 12px; } p { color: var(--text-faint); font-size: 11px; line-height: 1.7; }
 .scope-row,.scope-path { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 34px; }
-.scope-path code { font-size: 11px; overflow-wrap: anywhere; color: #a9bfd0; } .scope-path { margin-left: 12px; }
+.scope-path code { font-size: 11px; overflow-wrap: anywhere; color: var(--text-secondary); } .scope-path { margin-left: 12px; }
 .manual-path{display:flex;gap:8px;margin:12px 0;flex-wrap:wrap}.manual-path .el-input{flex:1;min-width:220px}
 </style>

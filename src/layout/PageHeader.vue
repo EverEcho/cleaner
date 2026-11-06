@@ -23,7 +23,7 @@ const description = computed(() => props.subtitle ?? subtitles[route.path] ?? ''
 <style scoped>
 .subpage-header { min-height: 100px; flex-shrink: 0; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 20px 28px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
 .header-left { display: flex; align-items: center; gap: 14px; min-width: 0; }
-.page-icon { width: 47px; height: 47px; border-radius: 15px; color: #cab3ff; background: linear-gradient(145deg, #ab7df025, #8258d40d); border: 1px solid #b390ed25; display: grid; place-items: center; flex-shrink: 0; box-shadow: inset 0 1px 0 #c7acff10; }
+.page-icon { width: 47px; height: 47px; border-radius: 15px; color: var(--accent); background: linear-gradient(145deg, rgba(var(--accent-rgb), 0.15), rgba(var(--accent-rgb), 0.06)); border: 1px solid var(--accent-border); display: grid; place-items: center; flex-shrink: 0; box-shadow: inset 0 1px 0 rgba(var(--accent-rgb), 0.06); }
 h1 { font-size: 23px; font-weight: 600; color: var(--text); margin: 0; letter-spacing: -.5px; }
 p { font-size: 11px; color: var(--text-muted); margin: 6px 0 0; line-height: 1.6; }
 .header-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: flex-end; min-width: 0; }

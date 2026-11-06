@@ -1,6 +1,6 @@
 fn main() {
     let start = std::time::Instant::now();
-    let report = tauri_app_lib::software_updates::check();
+    let report = appclear_lib::software_updates::check();
     println!(
         "elapsed={:.2}s packages={} tools={} warnings={}",
         start.elapsed().as_secs_f64(),

@@ -5,7 +5,9 @@ import "./styles/theme.css";
 import * as ElementPlusIconsVue from "@element-plus/icons-vue";
 import router from "./router";
 import App from "./App.vue";
+import { initializeTheme } from "./theme";
 
+initializeTheme();
 const app = createApp(App);
 
 for (const [key, component] of Object.entries(ElementPlusIconsVue)) {

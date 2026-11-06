@@ -9,6 +9,6 @@ defineProps<{ report: ActionReport | null }>();
   </details>
 </template>
 <style scoped>
-.action-results { margin: 14px 0; padding: 14px 16px; background: #ffffff04; border: 1px solid #ffffff14; border-radius: 14px; color: #c9bfdc; font-size: 12px; }
-summary { cursor: pointer; } .result { display: flex; gap: 12px; padding: 10px 0; border-top: 1px solid #ffffff08; margin-top: 9px; } .result > span { color: #74cfb2; min-width: 32px; } .result.failed > span { color: #f2b2a2; } .result.skipped > span { color: #cdb888; } code { overflow-wrap: anywhere; font-size: 11px; } p { margin: 5px 0 0; color: #998fac; font-size: 11px; }
+.action-results { margin: 14px 0; padding: 14px 16px; background: var(--surface-subtle); border: 1px solid var(--line); border-radius: 14px; color: var(--text-secondary); font-size: 12px; }
+summary { cursor: pointer; } .result { display: flex; gap: 12px; padding: 10px 0; border-top: 1px solid var(--line); margin-top: 9px; } .result > span { color: var(--success); min-width: 32px; } .result.failed > span { color: var(--danger); } .result.skipped > span { color: var(--warning); } code { overflow-wrap: anywhere; font-size: 11px; } p { margin: 5px 0 0; color: var(--text-muted); font-size: 11px; }
 </style>

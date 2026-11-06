@@ -65,7 +65,7 @@ const id = useId().replace(/:/g, '');
 
 <style scoped>
 .aurora-core { width: 100%; aspect-ratio: 1; position: relative; isolation: isolate; }
-.core-atmosphere { position: absolute; inset: 13%; border-radius: 50%; background: radial-gradient(circle at 47% 47%, #9360e629, #8155d915 42%, #66d2e507 58%, transparent 71%); filter: blur(17px); animation: atmosphere 7s ease-in-out infinite; }
+.core-atmosphere { position: absolute; inset: 13%; border-radius: 50%; background: radial-gradient(circle at 47% 47%, rgba(var(--accent-rgb), 0.16), rgba(var(--accent-rgb), 0.08) 42%, rgba(var(--cyan-rgb), 0.06) 58%, transparent 71%); filter: blur(17px); animation: atmosphere 7s ease-in-out infinite; }
 .core-scene { width: 100%; height: 100%; overflow: visible; position: relative; }
 .sphere-body { transform-origin: 200px 200px; animation: core-breathe 7s ease-in-out infinite; }
 .orbit-particle { animation: particle-shimmer 4s ease-in-out infinite; }

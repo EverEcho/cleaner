@@ -24,18 +24,18 @@ async function windowAction(action: 'close' | 'minimize' | 'maximize' | 'drag') 
       <button class="control minimize" aria-label="最小化窗口" :disabled="!native" @click="windowAction('minimize')"><span>−</span></button>
       <button class="control maximize" aria-label="切换最大化" :disabled="!native" @click="windowAction('maximize')"><span>+</span></button>
     </div>
-    <span class="window-title" aria-hidden="true">Cleaner <span>/</span> YOUR SPACE, REIMAGINED</span>
+    <span class="window-title" aria-hidden="true">AppClear <span>/</span> YOUR SPACE, REIMAGINED</span>
     <span class="window-privacy"><LockKeyhole :size="10" aria-hidden="true" />{{ native ? '本机管理' : '界面预览' }}</span>
   </div>
 </template>
 
 <style scoped>
-.window-bar { height: 40px; flex-shrink: 0; display: flex; align-items: center; position: relative; border-bottom: 1px solid #bc9ee907; background: #100c1e2e; }
+.window-bar { height: 40px; flex-shrink: 0; display: flex; align-items: center; position: relative; border-bottom: 1px solid var(--accent-border); background: var(--surface); }
 .window-controls { display: flex; gap: 8px; padding: 12px 21px; width: 208px; flex-shrink: 0; pointer-events: none; }
 .window-controls button { pointer-events: auto; }
-.window-title { color: #8d819e; font-size: 9px; letter-spacing: 1.2px; pointer-events: none; padding-left: 29px; }
-.window-title span { color: #635574; padding: 0 8px; }
-.window-privacy { margin-left: auto; padding: 0 24px; color: #847890; font-size: 10px; display: flex; align-items: center; gap: 6px; pointer-events: none; }
+.window-title { color: var(--text-faint); font-size: 9px; letter-spacing: 1.2px; pointer-events: none; padding-left: 29px; }
+.window-title span { color: var(--text-faint); padding: 0 8px; }
+.window-privacy { margin-left: auto; padding: 0 24px; color: var(--text-faint); font-size: 10px; display: flex; align-items: center; gap: 6px; pointer-events: none; }
 .control { border: 0; padding: 0; width: 12px; height: 12px; border-radius: 50%; display: grid; place-items: center; cursor: pointer; }
 .close { background: #ff5f57; } .minimize { background: #febc2e; } .maximize { background: #28c840; }
 .control span { opacity: 0; font-size: 11px; color: #634b30; line-height: 12px; }

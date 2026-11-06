@@ -158,7 +158,7 @@ pub fn bundle_icon(bundle: &Path, name: &str) -> String {
         time::{SystemTime, UNIX_EPOCH},
     };
     let temp = std::env::temp_dir().join(format!(
-        "appsteward-icon-{}-{}",
+        "appclear-icon-{}-{}",
         std::process::id(),
         SystemTime::now()
             .duration_since(UNIX_EPOCH)

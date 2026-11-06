@@ -323,7 +323,7 @@ pub fn execute(id: &str) -> Result<String, String> {
             if mac_snapshot(key)? != receipt.fingerprint {
                 return Err("应用文件已变化，请重新生成预览".into());
             }
-            platform::checked_output(Command::new("/usr/bin/osascript").args(["-e","on run argv\ntell application \"Finder\" to delete POSIX file (item 1 of argv)\nend run"]).arg(key))?;
+            platform::move_to_trash(Path::new(key))?;
         }
         #[cfg(target_os = "macos")]
         "brew" => {

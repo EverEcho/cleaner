@@ -1,5 +1,5 @@
 fn main() {
-    use tauri_app_lib::{autostart, entries, packages, platform, storage};
+    use appclear_lib::{autostart, entries, packages, platform, storage};
     println!(
         "platform={}",
         serde_json::to_string(&platform::info()).unwrap()
@@ -22,7 +22,7 @@ fn main() {
             .output()
             .is_ok_and(|o| o.status.success())
     );
-    let junk = tauri_app_lib::cleaner::scan_system_junk();
+    let junk = appclear_lib::cleaner::scan_system_junk();
     println!("junk_categories={}", junk.len());
     let actions: Vec<_> = junk
         .iter()
@@ -38,6 +38,11 @@ fn main() {
             .count()
             == 0
     );
-    let report = storage::analyze("/usr/share/applications").unwrap();
+    let path = if cfg!(target_os = "macos") {
+        "/System/Applications"
+    } else {
+        "/usr/share/applications"
+    };
+    let report = storage::analyze(path).unwrap();
     println!("du_ok=true partial={}", !report.warning.is_empty());
 }

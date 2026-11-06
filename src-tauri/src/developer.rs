@@ -130,6 +130,9 @@ fn protected_process_paths() -> Vec<PathBuf> {
 }
 fn protected_process_paths_controlled(cancelled: &dyn Fn() -> bool) -> Vec<PathBuf> {
     let mut paths = Vec::new();
+    if cancelled() {
+        return paths;
+    }
     if let Ok(exe) = std::env::current_exe() {
         paths.push(exe);
     }
@@ -213,7 +216,12 @@ fn collect_candidate(
         return Ok(());
     }
     let canonical = fs::canonicalize(&path).map_err(|e| e.to_string())?;
-    if contains_protected(&canonical, protected) || !seen.insert(canonical.clone()) {
+    if excluded
+        .iter()
+        .any(|root| canonical.starts_with(root) || root.starts_with(&canonical))
+        || contains_protected(&canonical, protected)
+        || !seen.insert(canonical.clone())
+    {
         return Ok(());
     }
     if let Some((size_bytes, fingerprint)) = aged_snapshot(&canonical, cutoff, cancelled)? {
@@ -264,10 +272,17 @@ pub fn scan_controlled(
     let cutoff = SystemTime::now()
         .checked_sub(Duration::from_secs(min_age_days * 86400))
         .ok_or("保留时间无效")?;
-    let protected = protected_process_paths_controlled(cancelled);
+    let protected = protected_process_paths_controlled(cancelled)
+        .iter()
+        .map(|path| platform::normalized_absolute(path))
+        .collect::<Result<Vec<_>, _>>()?;
+    let excluded = excluded
+        .iter()
+        .map(|path| platform::normalized_absolute(path))
+        .collect::<Result<Vec<_>, _>>()?;
     let safety = ScanSafety {
         protected: &protected,
-        excluded,
+        excluded: &excluded,
         cancelled,
     };
     let mut result = DevScan::default();
@@ -584,6 +599,10 @@ fn compose_storage(service: &Path, compose: &Path) -> Vec<PathBuf> {
     roots
 }
 fn storage_ancestor(root: &Path) -> bool {
+    let Ok(root) = fs::canonicalize(root) else {
+        // Unknown ownership must not become a cleanup candidate.
+        return true;
+    };
     root.ancestors().take(6).any(|ancestor| {
         database_storage(ancestor)
             || COMPOSE_FILES.iter().any(|file| {
@@ -623,6 +642,21 @@ fn scan_projects_controlled(
     limits: ScanLimits,
     report: &mut impl FnMut(DevProgress),
 ) -> Result<DevScan, String> {
+    let protected = safety
+        .protected
+        .iter()
+        .map(|path| platform::normalized_absolute(path))
+        .collect::<Result<Vec<_>, _>>()?;
+    let excluded = safety
+        .excluded
+        .iter()
+        .map(|path| platform::normalized_absolute(path))
+        .collect::<Result<Vec<_>, _>>()?;
+    let safety = &ScanSafety {
+        protected: &protected,
+        excluded: &excluded,
+        cancelled: safety.cancelled,
+    };
     let ScanSafety {
         excluded,
         cancelled,
@@ -886,7 +920,7 @@ mod tests {
     }
     #[test]
     fn project_recognition_keeps_locks_sources_and_unmarked_build_folders() {
-        let root = std::env::temp_dir().join(format!("appsteward-dev-test-{}", std::process::id()));
+        let root = std::env::temp_dir().join(format!("appclear-dev-test-{}", std::process::id()));
         fs::create_dir_all(root.join("node_modules")).unwrap();
         fs::create_dir_all(root.join("build")).unwrap();
         fs::write(root.join("package.json"), "{}").unwrap();
@@ -914,7 +948,7 @@ mod tests {
     }
     #[test]
     fn aged_artifacts_are_counted_but_new_or_changed_entries_are_kept() {
-        let root = std::env::temp_dir().join(format!("appsteward-dev-aged-{}", std::process::id()));
+        let root = std::env::temp_dir().join(format!("appclear-dev-aged-{}", std::process::id()));
         let cache = root.join(".cache");
         let old = cache.join("pip/old");
         let fresh = cache.join("pip/new");
@@ -940,8 +974,7 @@ mod tests {
     }
     #[test]
     fn source_file_count_does_not_consume_directory_budget_and_generated_trees_are_pruned() {
-        let root =
-            std::env::temp_dir().join(format!("appsteward-dir-budget-{}", std::process::id()));
+        let root = std::env::temp_dir().join(format!("appclear-dir-budget-{}", std::process::id()));
         fs::create_dir_all(root.join("project/node_modules/deep/nested")).unwrap();
         fs::create_dir_all(root.join("sdk/nested")).unwrap();
         fs::write(root.join("project/package.json"), "{}").unwrap();
@@ -979,7 +1012,7 @@ mod tests {
     #[test]
     fn discovery_limits_return_completed_targets_and_explain_partial_coverage() {
         let root =
-            std::env::temp_dir().join(format!("appsteward-partial-dev-{}", std::process::id()));
+            std::env::temp_dir().join(format!("appclear-partial-dev-{}", std::process::id()));
         fs::create_dir_all(root.join("target")).unwrap();
         fs::create_dir_all(root.join("subproject")).unwrap();
         fs::write(root.join("Cargo.toml"), "project marker").unwrap();
@@ -1018,7 +1051,7 @@ mod tests {
     #[test]
     fn compose_runtime_storage_is_skipped_but_source_projects_remain() {
         let root =
-            std::env::temp_dir().join(format!("appsteward-dev-storage-{}", std::process::id()));
+            std::env::temp_dir().join(format!("appclear-dev-storage-{}", std::process::id()));
         let service = root.join("service");
         for path in ["data", "data_pg15", "src"] {
             fs::create_dir_all(service.join(path)).unwrap();
@@ -1038,13 +1071,17 @@ mod tests {
         .unwrap();
         assert_eq!(report.projects_found, 1);
         assert_eq!(report.storage_skipped, 2);
-        assert!(
-            report
-                .targets
-                .iter()
-                .all(|item| item.path.starts_with(service.join("src")))
-        );
+        assert!(report.targets.iter().all(|item| {
+            item.path
+                .starts_with(fs::canonicalize(service.join("src")).unwrap())
+        }));
         assert!(storage_ancestor(&service.join("data")));
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(&service, root.join("service-alias")).unwrap();
+            assert!(storage_ancestor(&root.join("service-alias/data")));
+            assert!(!storage_ancestor(&root.join("service-alias/src")));
+        }
         fs::remove_dir_all(root).unwrap();
     }
 }
