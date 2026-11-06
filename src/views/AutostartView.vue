@@ -1,10 +1,13 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue';
+import { computed, ref } from 'vue';
 import { invoke, isTauri } from '@tauri-apps/api/core';
 import { ElMessage } from 'element-plus';
-import { Info, Monitor, Power, RefreshCw, Search } from 'lucide-vue-next';
+import { Monitor, Power, RefreshCw, Search } from 'lucide-vue-next';
 import { platformInfo, loadPlatform } from '../platform';
 import PageHeader from '../layout/PageHeader.vue';
+import SummaryDetails from '../components/SummaryDetails.vue';
+import ScanAction from '../components/ScanAction.vue';
+import ScanningRadar from '../layout/ScanningRadar.vue';
 
 interface AutostartItem { path: string; name: string; exec: string; comment: string; enabled: boolean; is_user: boolean }
 const desktopConnected = isTauri();
@@ -45,20 +48,19 @@ async function handleToggleAutostart(item: AutostartItem) {
   await loadAutostart();
   toggling.value = false;
 }
-onMounted(() => { void loadAutostart(); });
 </script>
 
 <template>
   <div class="tool-page">
     <PageHeader title="启动项" subtitle="让需要的应用随你启动，其他的留待稍后。">
-      <template #actions><el-button :loading="scanning" :disabled="!desktopConnected || toggling" @click="loadAutostart"><RefreshCw :size="14" />刷新列表</el-button></template>
+      <template #actions><el-button v-if="!scanning && (loaded || error)" :disabled="!desktopConnected || toggling" @click="loadAutostart"><RefreshCw :size="14" />{{ error ? '重试读取' : '刷新列表' }}</el-button></template>
     </PageHeader>
     <div class="tool-content">
       <div v-if="!desktopConnected" class="empty-state"><span class="empty-icon"><Monitor :size="30" /></span><h2>让开机更从容</h2><p>请在桌面应用中打开，查看并管理本机的登录启动项。</p><span class="state-label">浏览器预览 · 尚未连接桌面端</span></div>
+      <div v-else-if="!loaded && !scanning && !error" class="empty-state"><span class="empty-icon"><Power :size="30" /></span><h2>查看登录启动项</h2><p>读取本机启动项，按需调整登录启动状态。</p><ScanAction initial :scanning="false" :disabled="toggling" label="读取列表" @start="loadAutostart" /></div>
+      <ScanningRadar v-else-if="scanning" title="正在读取列表…" sub-title="完成后可查看并管理项目" />
       <template v-else>
-        <div class="result-summary"><strong>{{ loaded ? enabledCount : '—' }} <small>项已启用</small></strong><span>共 {{ loaded ? autostartList.length : '—' }} 个启动项</span></div>
-        <el-alert v-if="error" title="启动项读取未完成" :description="error" type="error" :closable="false" show-icon />
-        <div v-if="platformInfo?.autostart_note" class="platform-note"><Info :size="15" /><span>{{ platformInfo.autostart_note }}</span></div>
+        <div class="result-summary"><strong>{{ loaded ? enabledCount : '—' }} <small>项已启用</small></strong><span>共 {{ loaded ? autostartList.length : '—' }} 个启动项</span><div class="summary-actions"><SummaryDetails :label="error ? '读取未完成' : '结果提示'" :count="(error ? 1 : 0) + (platformInfo?.autostart_note ? 1 : 0)" :tone="error ? 'danger' : undefined"><p v-if="error" class="detail-message danger">{{ error }}</p><p v-if="platformInfo?.autostart_note">{{ platformInfo?.autostart_note }}</p><p v-if="!error && !(platformInfo?.autostart_note)">暂无结果提示</p></SummaryDetails></div></div>
         <div class="result-heading"><p class="table-hint">通过开关调整登录启动状态</p><el-input v-model="search" placeholder="搜索启动项" clearable class="search-input"><template #prefix><Search :size="14" /></template></el-input></div>
         <div v-loading="scanning" class="table-panel">
           <el-table :data="filtered" :empty-text="scanning ? '正在读取启动项…' : loaded ? (search ? '没有匹配的启动项' : '未发现登录启动项') : '尚未读取启动项'">

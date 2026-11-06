@@ -6,6 +6,7 @@ import { revealItemInDir } from '@tauri-apps/plugin-opener';
 import { ElMessage } from 'element-plus';
 import { Package, Search, Monitor, ShieldCheck, Info, ListChecks, FolderOpen } from 'lucide-vue-next';
 import PageHeader from '../layout/PageHeader.vue';
+import SummaryDetails from '../components/SummaryDetails.vue';
 import ScanAction from '../components/ScanAction.vue';
 import ScanningRadar from '../layout/ScanningRadar.vue';
 import { runTask, activeTask } from '../tasks';
@@ -19,7 +20,7 @@ interface QueueItem {app:AppItem;manual?:ManualPlan;plan?:PackagePlan;paths:stri
 interface Profile {app:AppItem;caches:{path:string;size_bytes:number|null;note:string}[];startup:{path:string;name:string;enabled:boolean}[];update:{current:string;latest:string;channel:string;checked_at:string}|null;notes:string[]}
 interface UninstallProgress {request_id:string;message:string;percentage:number|null;done?:number;total?:number}
 const desktopAvailable=isTauri();
-const scanning=ref(desktopAvailable),loaded=ref(false),loadError=ref(''),apps=ref<AppItem[]>([]),report=ref<ScanReport|null>(null);
+const scanning=ref(false),loaded=ref(false),loadError=ref(''),apps=ref<AppItem[]>([]),report=ref<ScanReport|null>(null);
 const appSearch=ref(''),activeCategory=ref<'user'|'all'>('user'),source=ref('all'),sort=ref('name');
 const selectedApps=ref<AppItem[]>([]),failedIcons=ref(new Set<string>());
 const channels=computed(()=>[...new Set(apps.value.map(a=>a.pkg_type))].sort());
@@ -31,7 +32,7 @@ function formatBytes(bytes:number|null){if(bytes===null)return '未知';return b
 function appRowKey(app:AppItem){return `${app.pkg_type}:${app.key}`;}
 function iconFailed(key:string){failedIcons.value=new Set([...failedIcons.value,key]);}
 async function loadApps(){
-  if(scanning.value && loaded.value || uninstalling.value)return;
+  if(!desktopAvailable || scanning.value || uninstalling.value)return;
   scanning.value=true;loadError.value='';
   try{report.value=await runTask<ScanReport>('get_installed_apps_report');apps.value=report.value.apps;loaded.value=true;selectedApps.value=[];}
   catch(error){loadError.value=String(error);ElMessage.error('应用读取未完成：'+error);}
@@ -116,25 +117,28 @@ async function executeQueue(failedOnly=false){
 const profileDialog=ref(false),profileLoading=ref(false),profile=ref<Profile|null>(null),profileError=ref('');
 async function openProfile(app:AppItem){profileDialog.value=true;profileLoading.value=true;profile.value=null;profileError.value='';try{profile.value=await invoke<Profile>('get_app_profile',{pkgType:app.pkg_type,key:app.key});}catch(error){profileError.value=String(error);}finally{profileLoading.value=false;}}
 async function reveal(path:string){try{await revealItemInDir(path);}catch(error){ElMessage.error('无法定位：'+error);}}
-onMounted(async()=>{if(!desktopAvailable)return;try{const stop=await listen<UninstallProgress>('uninstall-progress',event=>{if(event.payload.request_id===uninstallProgress.value.request_id)uninstallProgress.value=event.payload;});if(disposed){stop();return;}unlisten=stop;}catch{}if(!disposed)await loadApps();});
+onMounted(async()=>{if(!desktopAvailable)return;try{const stop=await listen<UninstallProgress>('uninstall-progress',event=>{if(event.payload.request_id===uninstallProgress.value.request_id)uninstallProgress.value=event.payload;});if(disposed){stop();return;}unlisten=stop;}catch{}});
 onUnmounted(()=>{disposed=true;unlisten?.();});
 onDeactivated(()=>{uninstallDialog.value=false;profileDialog.value=false;});
 </script>
 <template>
   <div class="subpage-container">
     <PageHeader title="应用管理" subtitle="把安装来源、关联数据与每次卸载的影响放在一起。">
-      <template #actions><el-button v-if="queue.length" @click="uninstallDialog=true"><ListChecks :size="15"/>卸载队列 {{ queue.length }}</el-button><ScanAction :scanning="scanning" :task="activeTask('get_installed_apps_report')" :disabled="!desktopAvailable||uninstalling" hint="读取应用中，可切换页面" label="刷新列表" @start="loadApps" /></template>
+      <template #actions><el-button v-if="queue.length" @click="uninstallDialog=true"><ListChecks :size="15"/>卸载队列 {{ queue.length }}</el-button><ScanAction v-if="!scanning && (loaded || loadError)" :scanning="scanning" :task="activeTask('get_installed_apps_report')" :disabled="!desktopAvailable||uninstalling" hint="读取应用中，可切换页面" :label="loadError ? '重试读取' : '刷新列表'" @start="loadApps" /></template>
     </PageHeader>
     <div class="subpage-content">
       <div v-if="!desktopAvailable" class="desktop-notice"><Monitor :size="38"/><h2>你的应用，一目了然</h2><p>请在 AppClear 桌面应用中查看本机已安装软件。</p><span>浏览器预览不会读取应用列表</span></div>
       <template v-else>
 
-        <ScanningRadar v-if="scanning&&!loaded" title="正在识别你的应用" sub-title="逐个读取安装渠道，并记录未能读取的范围" :tips="['读取桌面入口与独立安装结构…','核对系统包的手动安装标记…','识别 Flatpak 安装范围与完整应用标识…']"/>
+        <ScanningRadar v-if="scanning" title="正在识别你的应用" sub-title="逐个读取安装渠道，并记录未能读取的范围" :tips="['读取桌面入口与独立安装结构…','核对系统包的手动安装标记…','识别 Flatpak 安装范围与完整应用标识…']"><ScanAction initial :scanning="true" :task="activeTask('get_installed_apps_report')" hint="读取应用中，可切换页面" stop-label="停止读取" /></ScanningRadar>
+        <div v-else-if="!loaded&&!loadError" class="desktop-notice"><Package :size="38"/><h2>查看已安装的应用</h2><p>读取本机应用，查看安装渠道和占用空间。</p><ScanAction initial :scanning="false" :disabled="uninstalling" label="读取应用" @start="loadApps" /></div>
         <div v-else class="table-container">
-          <div class="result-summary"><strong>{{ loaded ? userAppsCount : '—' }} <small>个桌面应用</small></strong><span>{{ apps.length }} 个应用与工具 · 已统计 {{ installedSize }}<template v-if="unknownSizes"> · {{ unknownSizes }} 项大小未知</template></span></div>
-          <div v-if="loadError" class="coverage-warning" role="alert">应用读取未完成：{{ loadError }}</div>
-          <details v-if="report" class="interaction-details"><summary>安装渠道与检测范围</summary><div class="channel-strip"><el-tooltip v-for="channel in report.channels" :key="channel.id" :content="channel.note"><el-tag :type="channel.status==='ok'?'success':channel.status==='unavailable'?'info':'warning'" size="small">{{ channel.id.toUpperCase() }} · {{ channel.status==='unavailable'?'未安装':channel.status==='failed'?'失败，数量未知':channel.status==='partial'?'部分读取':channel.status==='cancelled'?'已停止':channel.count===null?'已查询':channel.count+' 项' }}</el-tag></el-tooltip><span class="checked-time">{{ new Date(report.checked_at).toLocaleTimeString() }}</span></div></details>
-          <details v-if="report?.warnings.length" class="coverage-warning"><summary>有 {{ report.warnings.length }} 条覆盖提示，结果可能不完整</summary><p v-for="warning in report.warnings" :key="warning">{{ warning }}</p></details>
+          <div class="result-summary"><strong>{{ loaded ? userAppsCount : '—' }} <small>个桌面应用</small></strong><span>{{ apps.length }} 个应用与工具 · 已统计 {{ installedSize }}<template v-if="unknownSizes"> · {{ unknownSizes }} 项大小未知</template></span>
+            <div class="summary-actions">
+              <SummaryDetails label="检测范围" :count="report?.channels.length || 0" title="安装渠道与检测范围"><p v-if="!report">尚未完成检测</p><template v-if="report"><p>最近检测：{{ new Date(report.checked_at).toLocaleTimeString() }}</p><article v-for="channel in report.channels" :key="channel.id" class="detail-message"><b>{{ channel.id.toUpperCase() }}</b> · {{ channel.status==='unavailable'?'未安装':channel.status==='failed'?'失败，数量未知':channel.status==='partial'?'部分读取':channel.status==='cancelled'?'已停止':channel.count===null?'已查询':channel.count+' 项' }}<p>{{ channel.note }}</p></article></template></SummaryDetails>
+              <SummaryDetails :label="loadError ? '读取未完成' : '结果提示'" :count="(report?.warnings.length || 0) + (loadError ? 1 : 0)" :tone="loadError ? 'danger' : report?.warnings.length ? 'warning' : undefined"><p v-if="loadError" class="detail-message danger">{{ loadError }}</p><p v-for="warning in report?.warnings" :key="warning" class="detail-message warning">{{ warning }}</p><p v-if="!loadError && !report?.warnings.length">暂无结果提示</p></SummaryDetails>
+            </div>
+          </div>
           <div v-if="loaded" class="apps-toolbar">
             <el-radio-group v-model="activeCategory" size="small"><el-radio-button value="user">桌面应用</el-radio-button><el-radio-button value="all">全部工具</el-radio-button></el-radio-group>
             <el-select v-model="source" class="source-select" aria-label="安装渠道"><el-option label="全部安装渠道" value="all"/><el-option v-for="channel in channels" :key="channel" :label="channel.toUpperCase()" :value="channel"/></el-select>

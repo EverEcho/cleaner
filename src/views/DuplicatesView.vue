@@ -5,6 +5,7 @@ import { revealItemInDir } from '@tauri-apps/plugin-opener';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import { ChevronDown, Copy, File, Monitor, Search, ShieldCheck, Trash2 } from 'lucide-vue-next';
 import PageHeader from '../layout/PageHeader.vue';
+import SummaryDetails from '../components/SummaryDetails.vue';
 import ScanAction from '../components/ScanAction.vue';
 import ScanningRadar from '../layout/ScanningRadar.vue';
 import ScanScope from '../components/ScanScope.vue';
@@ -55,27 +56,25 @@ async function removeSelected() {
 async function loadDuplicates() {
   if (!desktopConnected || scanning.value) return;
   scanning.value = true; loaded.value = false; selected.value = []; retained.value = {}; duplicateGroups.value = []; error.value = ''; warnings.value = [];
-  try { const report = await runTask<FileScanReport<DuplicateGroup>>('scan_duplicate_files', { options: { roots: preferences.scan_roots, excluded: preferences.exclusions } }); duplicateGroups.value = report.items; warnings.value = report.warnings; scannedRoots.value = report.roots; loaded.value = true; } catch (cause) { error.value = String(cause); } finally { scanning.value = false; }
+  try { await loadPreferences(); const report = await runTask<FileScanReport<DuplicateGroup>>('scan_duplicate_files', { options: { roots: preferences.scan_roots, excluded: preferences.exclusions } }); duplicateGroups.value = report.items; warnings.value = report.warnings; scannedRoots.value = report.roots; loaded.value = true; } catch (cause) { error.value = String(cause); } finally { scanning.value = false; }
 }
-onMounted(async () => { await loadPreferences(); await loadDuplicates(); });
+onMounted(() => { void loadPreferences().catch(cause => { error.value = String(cause); }); });
 onDeactivated(() => { if (cancelConfirmation) { ElMessageBox.close(); cancelConfirmation(); cancelConfirmation = undefined; } });
 </script>
 
 <template>
   <div class="tool-page">
     <PageHeader title="重复文件" subtitle="相同的内容，只留下你想保留的那份。">
-      <template #actions><ScanAction :scanning="scanning" :task="task" :disabled="!desktopConnected || removing" :hint="`已检查 ${task?.current || 0} 项`" label="重新比对" @start="loadDuplicates" /></template>
+      <template #actions><ScanAction v-if="!scanning && (loaded || error)" :scanning="scanning" :task="task" :disabled="!desktopConnected || removing" :hint="`已检查 ${task?.current || 0} 项`" :label="error ? '重试比对' : '重新比对'" @start="loadDuplicates" /></template>
     </PageHeader>
     <div class="tool-content">
-      <ScanScope :disabled="scanning || removing || !desktopConnected" />
-      <ActionResults :report="result" />
+      <div v-if="desktopConnected" class="result-summary"><strong>{{ loaded ? formatSize(extraSize) : '尚未比对' }}</strong><span>多余副本 · {{ duplicateGroups.length }} 组 / {{ fileCount }} 份文件</span><div class="summary-actions"><ScanScope popup :disabled="scanning || removing || !desktopConnected" />
+        <SummaryDetails :label="error ? '扫描未完成' : '结果提示'" :count="warnings.length + (error ? 1 : 0)" :tone="error ? 'danger' : warnings.length ? 'warning' : undefined"><p v-if="error" class="detail-message danger">{{ error }}</p><p v-for="note in warnings" :key="note" class="detail-message warning">{{ note }}</p><p v-if="!error && !warnings.length">暂无结果提示</p><p v-if="scannedRoots.length">本次覆盖：{{ scannedRoots.join('、') }}</p></SummaryDetails><ActionResults :report="result" />
+      </div></div>
       <div v-if="!desktopConnected" class="empty-state"><span class="empty-icon"><Monitor :size="30" /></span><h2>把多余的副本找出来</h2><p>请在桌面应用中打开，通过文件内容比对重复副本。</p><span class="state-label">浏览器预览 · 尚未连接桌面端</span></div>
-      <div v-else-if="scanning"><ScanningRadar title="正在比对文件内容" :sub-title="task?.path || '准备扫描…'" :tips="[]" /></div>
+      <div v-else-if="scanning"><ScanningRadar title="正在比对文件内容" :sub-title="task?.path || '准备扫描…'" :tips="[]"><ScanAction initial :scanning="true" :task="task" :hint="`已检查 ${task?.current || 0} 项`" stop-label="停止比对" /></ScanningRadar></div>
       <template v-else>
-        <el-alert v-if="error" title="重复文件比对未完成" :description="error" type="error" :closable="false" show-icon />
         <template v-if="loaded">
-          <el-alert v-if="warnings.length" title="部分扫描范围未覆盖" :description="warnings.join('\n')" type="warning" :closable="false" show-icon />
-          <div class="result-summary"><strong>{{ formatSize(extraSize) }}</strong><span>多余副本 · {{ duplicateGroups.length }} 组 / {{ fileCount }} 份文件</span></div>
           <div class="result-heading"><div><h2>内容相同的副本</h2><p><ShieldCheck :size="12" />每组至少保留一份，不预选任何文件。</p></div><el-input v-model="search" placeholder="搜索文件或路径" clearable :disabled="removing" class="search-input"><template #prefix><Search :size="14" /></template></el-input></div>
           <div v-for="group in filteredGroups" :key="group.hash" class="duplicate-card">
             <div class="group-heading"><div class="group-identity"><span class="group-icon"><Copy :size="18" /></span><div><h3 :title="fileName(group.files[0] || '')">{{ fileName(group.files[0] || '') }}</h3><span>{{ group.files.length }} 份内容相同 · 单份 {{ group.size_str }}</span></div></div><div><el-button text :disabled="removing" @click="selectOthers(group)">选择其余副本</el-button><span class="duplicate-size">多余 {{ formatSize(group.size_bytes * (group.files.length - 1)) }}</span></div></div>
@@ -83,9 +82,9 @@ onDeactivated(() => { if (cancelConfirmation) { ElMessageBox.close(); cancelConf
             <div class="group-footer"><span :title="`SHA-256 · ${group.hash}`">内容已核对</span><span>{{ group.files.filter(file => selectedSet.has(file)).length }} 份已选择</span></div>
           </div>
           <div v-if="!filteredGroups.length" class="empty-state compact"><span class="empty-icon"><Copy :size="28" /></span><h2>{{ search ? '没有匹配的副本' : '文件，各有各的内容' }}</h2><p>{{ search ? '尝试其他名称或路径。' : '本次已读取目录中，未发现内容完全相同的重复文件。' }}</p></div>
-          <p class="footnote">覆盖：{{ scannedRoots.join('、') }}。比对大于 64 KB 的文件；容量为逻辑大小，同一文件的硬链接不会产生额外可释放空间。</p>
+          <p class="footnote">比对大于 64 KB 的文件；容量为逻辑大小，同一文件的硬链接不会产生额外可释放空间。</p>
         </template>
-        <div v-else-if="!error" class="empty-state"><span class="empty-icon"><Copy :size="30" /></span><h2>发现相同的内容</h2><p>开始比对，找出常用目录中的重复文件。</p></div>
+        <div v-else-if="!error" class="empty-state"><span class="empty-icon"><Copy :size="30" /></span><h2>发现相同的内容</h2><p>比对文件内容，找出所选目录中的重复副本。</p><ScanAction initial :scanning="false" :disabled="removing" label="开始比对" @start="loadDuplicates" /></div>
       </template>
     </div>
     <div v-if="selected.length && !scanning" class="selection-bar"><div><span>已选择 {{ selected.length }} 份副本</span><strong>{{ formatSize(selectedSize) }}</strong></div><div class="selection-actions"><el-button text @click="selectionDialog = true">查看已选</el-button><el-button text :disabled="removing" @click="selected = []">取消选择</el-button><el-button type="primary" :loading="removing" @click="removeSelected"><Trash2 :size="15" />移入废纸篓</el-button></div></div>

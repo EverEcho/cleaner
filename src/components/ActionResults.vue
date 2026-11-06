@@ -1,14 +1,13 @@
 <script setup lang="ts">
 import type { ActionReport } from '../cleanup';
+import SummaryDetails from './SummaryDetails.vue';
 defineProps<{ report: ActionReport | null }>();
 </script>
 <template>
-  <details v-if="report" class="action-results" :open="report.failed > 0">
-    <summary>处理结果 · {{ report.succeeded }} 成功 / {{ report.failed }} 失败 / {{ report.skipped }} 跳过</summary>
-    <div v-for="(item, index) in report.items" :key="`${item.path}:${index}`" class="result" :class="item.status"><span>{{ item.status === 'success' ? '成功' : item.status === 'failed' ? '失败' : '跳过' }}</span><div><code>{{ item.path }}</code><p>{{ item.message }}</p></div></div>
-  </details>
+  <SummaryDetails v-if="report" label="处理结果" :count="`${report.succeeded} 成功 / ${report.failed} 失败 / ${report.skipped} 跳过`" :tone="report.failed ? 'danger' : report.skipped ? 'warning' : undefined">
+    <div v-for="(item, index) in report.items" :key="`${item.path}:${index}`" class="result" :class="item.status"><span>{{ item.status === 'success' ? '成功' : item.status === 'failed' ? '失败' : '跳过' }}</span><div><code :title="item.path">{{ item.path }}</code><p>{{ item.message }}</p></div></div>
+  </SummaryDetails>
 </template>
 <style scoped>
-.action-results { margin: 14px 0; padding: 14px 16px; background: var(--surface-subtle); border: 1px solid var(--line); border-radius: 14px; color: var(--text-secondary); font-size: 12px; }
-summary { cursor: pointer; } .result { display: flex; gap: 12px; padding: 10px 0; border-top: 1px solid var(--line); margin-top: 9px; } .result > span { color: var(--success); min-width: 32px; } .result.failed > span { color: var(--danger); } .result.skipped > span { color: var(--warning); } code { overflow-wrap: anywhere; font-size: 11px; } p { margin: 5px 0 0; color: var(--text-muted); font-size: 11px; }
+.result { display: flex; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--line); } .result > div { flex: 1; min-width: 0; } .result > span { color: var(--success); min-width: 32px; } .result.failed > span { color: var(--danger); } .result.skipped > span { color: var(--warning); } code { font-size: 11px; } p { margin: 5px 0 0; color: var(--text-muted); font-size: 11px; }
 </style>

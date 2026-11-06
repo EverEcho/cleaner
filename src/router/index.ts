@@ -1,4 +1,5 @@
 import { createRouter, createWebHashHistory } from 'vue-router';
+import { desktopEntriesAvailable, loadPlatform } from '../platform';
 
 const routes = [
   { path: '/monitor', name: 'Monitor', component: () => import('../views/MonitorView.vue'), meta: { title: '本机监控' } },
@@ -30,6 +31,10 @@ const routes = [
   {
     path: '/entries',
     name: 'Entries',
+    beforeEnter: async () => {
+      await loadPlatform().catch(() => {});
+      return desktopEntriesAvailable.value || { path: '/apps', replace: true };
+    },
     component: () => import('../views/EntriesView.vue'),
     meta: { title: '桌面与菜单图标' },
   },

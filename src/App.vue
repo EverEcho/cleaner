@@ -5,7 +5,7 @@ import { ElMessage } from 'element-plus';
 import { Sparkles, Trash2, HardDrive, AppWindow, ArrowUpCircle, Power, PanelsTopLeft, Files, Copy, Monitor, ChevronRight,Activity } from 'lucide-vue-next';
 import WindowBar from './layout/WindowBar.vue';
 import ThemeSwitcher from './components/ThemeSwitcher.vue';
-import { loadPlatform, platformInfo } from './platform';
+import { desktopEntriesAvailable, loadPlatform, platformInfo } from './platform';
 import TaskStatusBar from './layout/TaskStatusBar.vue';
 import { initializeTasks,disposeTasks } from './tasks';
 import { loadPreferences } from './preferences';
@@ -31,6 +31,7 @@ const groups = [
     { path: '/duplicates', label: '重复文件', icon: Copy },
   ] },
 ];
+const visibleGroups = computed(() => groups.map(group => ({ ...group, items: group.items.filter(item => item.path !== '/entries' || desktopEntriesAvailable.value) })));
 onMounted(() => { loadPlatform().catch(error => ElMessage.error('读取系统信息失败: ' + error)); initializeTasks().catch(error=>ElMessage.warning('任务状态连接失败: '+error)); loadPreferences().then(startMonitor).catch(error=>ElMessage.warning('设置读取失败: '+error)); });
 onUnmounted(()=>{disposeTasks();stopMonitor();});
 </script>
@@ -45,7 +46,7 @@ onUnmounted(()=>{disposeTasks();stopMonitor();});
           <span class="brand-name">AppClear<small>本机清理助手</small></span>
         </router-link>
         <nav class="navigation">
-          <div v-for="group in groups" :key="group.label" class="nav-group">
+          <div v-for="group in visibleGroups" :key="group.label" class="nav-group">
             <p class="nav-label">{{ group.label }}</p>
             <router-link v-for="item in group.items" :key="item.path" :to="item.path" class="nav-item" :aria-label="item.label" :class="{ active: $route.path === item.path }" :aria-current="$route.path === item.path ? 'page' : undefined">
               <component :is="item.icon" :size="18" :stroke-width="1.7" aria-hidden="true" />

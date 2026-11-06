@@ -1,10 +1,13 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue';
+import { computed, ref } from 'vue';
 import { invoke, isTauri } from '@tauri-apps/api/core';
 import { ElMessage } from 'element-plus';
-import { Info, LayoutGrid, Monitor, RefreshCw, Search } from 'lucide-vue-next';
+import { LayoutGrid, Monitor, RefreshCw, Search } from 'lucide-vue-next';
 import { platformInfo, loadPlatform } from '../platform';
 import PageHeader from '../layout/PageHeader.vue';
+import SummaryDetails from '../components/SummaryDetails.vue';
+import ScanAction from '../components/ScanAction.vue';
+import ScanningRadar from '../layout/ScanningRadar.vue';
 
 interface DesktopEntry { path: string; basename: string; name: string; exec: string; scope: string; visible: boolean }
 const desktopConnected = isTauri();
@@ -47,20 +50,19 @@ async function handleToggleEntry(entry: DesktopEntry) {
   await loadDesktopEntries();
   toggling.value = false;
 }
-onMounted(() => { void loadDesktopEntries(); });
 </script>
 
 <template>
   <div class="tool-page">
     <PageHeader title="应用入口" subtitle="整理应用菜单，把常用的留在眼前。">
-      <template #actions><el-button :loading="scanning" :disabled="!desktopConnected || toggling" @click="loadDesktopEntries"><RefreshCw :size="14" />刷新列表</el-button></template>
+      <template #actions><el-button v-if="!scanning && (loaded || error)" :disabled="!desktopConnected || toggling" @click="loadDesktopEntries"><RefreshCw :size="14" />{{ error ? '重试读取' : '刷新列表' }}</el-button></template>
     </PageHeader>
     <div class="tool-content">
       <div v-if="!desktopConnected" class="empty-state"><span class="empty-icon"><Monitor :size="30" /></span><h2>为桌面留一点秩序</h2><p>请在桌面应用中打开，查看本机的应用入口和菜单可见性。</p><span class="state-label">浏览器预览 · 尚未连接桌面端</span></div>
+      <div v-else-if="!loaded && !scanning && !error" class="empty-state"><span class="empty-icon"><LayoutGrid :size="30" /></span><h2>查看应用入口</h2><p>读取应用入口，整理菜单中的显示项目。</p><ScanAction initial :scanning="false" :disabled="toggling" label="读取列表" @start="loadDesktopEntries" /></div>
+      <ScanningRadar v-else-if="scanning" title="正在读取列表…" sub-title="完成后可查看并管理项目" />
       <template v-else>
-        <div class="result-summary"><strong>{{ loaded ? desktopEntries.length : '—' }} <small>个应用入口</small></strong><span>{{ visibleCount }} 个显示 · {{ desktopEntries.length - visibleCount }} 个隐藏</span></div>
-        <el-alert v-if="error" title="应用入口读取未完成" :description="error" type="error" :closable="false" show-icon />
-        <div v-if="platformInfo && !platformInfo.desktop_visibility" class="platform-note"><Info :size="15" /><span>此系统的应用入口仅供查看，可见性由系统管理。</span></div>
+        <div class="result-summary"><strong>{{ loaded ? desktopEntries.length : '—' }} <small>个应用入口</small></strong><span>{{ visibleCount }} 个显示 · {{ desktopEntries.length - visibleCount }} 个隐藏</span><div class="summary-actions"><SummaryDetails :label="error ? '读取未完成' : '结果提示'" :count="(error ? 1 : 0) + (platformInfo && !platformInfo.desktop_visibility ? 1 : 0)" :tone="error ? 'danger' : undefined"><p v-if="error" class="detail-message danger">{{ error }}</p><p v-if="platformInfo && !platformInfo.desktop_visibility">此系统的应用入口仅供查看，可见性由系统管理。</p><p v-if="!error && !(platformInfo && !platformInfo.desktop_visibility)">暂无结果提示</p></SummaryDetails></div></div>
         <div class="result-heading"><p class="table-hint">{{ platformInfo?.desktop_visibility ? '通过开关调整菜单显示' : '应用入口仅供查看' }}</p><el-input v-model="entrySearch" placeholder="搜索名称或文件名" clearable class="search-input"><template #prefix><Search :size="14" /></template></el-input></div>
         <div v-loading="scanning" class="table-panel">
           <el-table :data="filteredEntries" :empty-text="scanning ? '正在读取应用入口…' : loaded ? (entrySearch ? '没有匹配的应用入口' : '未发现应用入口') : '尚未读取应用入口'">

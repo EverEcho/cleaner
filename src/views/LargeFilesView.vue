@@ -1,11 +1,12 @@
 <script setup lang="ts">
-import { computed, nextTick, onDeactivated, onMounted, ref, watch } from 'vue';
+import { computed, nextTick, onDeactivated, onMounted, ref } from 'vue';
 import { isTauri } from '@tauri-apps/api/core';
 import { useRoute, useRouter } from 'vue-router';
 import { revealItemInDir } from '@tauri-apps/plugin-opener';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import { ChevronDown, File, HardDrive, Monitor, Search, Trash2 } from 'lucide-vue-next';
 import PageHeader from '../layout/PageHeader.vue';
+import SummaryDetails from '../components/SummaryDetails.vue';
 import ScanAction from '../components/ScanAction.vue';
 import ScanningRadar from '../layout/ScanningRadar.vue';
 import ScanScope from '../components/ScanScope.vue';
@@ -51,30 +52,26 @@ async function removeSelected() {
 async function loadLargeFiles() {
   if (!desktopConnected || scanning.value) return;
   scanning.value = true; loaded.value = false; table.value?.clearSelection(); selected.value = []; largeFiles.value = []; error.value = ''; warnings.value = [];
-  try { const report = await runTask<FileScanReport<LargeFile>>('scan_large_files', { minMb: preferences.large_min_mb, options: { roots: typeof route.query.root === 'string' ? [route.query.root] : preferences.scan_roots, excluded: preferences.exclusions, min_mb: preferences.large_min_mb } }); largeFiles.value = report.items; warnings.value = report.warnings; scannedRoots.value = report.roots; loaded.value = true; }
+  try { await loadPreferences(); const report = await runTask<FileScanReport<LargeFile>>('scan_large_files', { minMb: preferences.large_min_mb, options: { roots: typeof route.query.root === 'string' ? [route.query.root] : preferences.scan_roots, excluded: preferences.exclusions, min_mb: preferences.large_min_mb } }); largeFiles.value = report.items; warnings.value = report.warnings; scannedRoots.value = report.roots; loaded.value = true; }
   catch (cause) { error.value = String(cause); } finally { scanning.value = false; }
 }
-watch(() => route.query.root, () => { if (route.path === '/large-files' && desktopConnected && !scanning.value && !removing.value) void loadLargeFiles(); });
-onMounted(async () => { await loadPreferences(); await loadLargeFiles(); });
+onMounted(() => { void loadPreferences().catch(cause => { error.value = String(cause); }); });
 onDeactivated(() => { if (cancelConfirmation) { ElMessageBox.close(); cancelConfirmation(); cancelConfirmation = undefined; } });
 </script>
 
 <template>
   <div class="tool-page">
     <PageHeader title="大文件" subtitle="找出占用空间的主角，让每一次清理都有把握。">
-      <template #actions><ScanAction :scanning="scanning" :task="task" :disabled="!desktopConnected || removing" :hint="`已检查 ${task?.current || 0} 个文件`" @start="loadLargeFiles" /></template>
+      <template #actions><ScanAction v-if="!scanning && (loaded || error)" :scanning="scanning" :task="task" :disabled="!desktopConnected || removing" :hint="`已检查 ${task?.current || 0} 个文件`" :label="error ? '重试扫描' : '重新扫描'" @start="loadLargeFiles" /></template>
     </PageHeader>
     <div class="tool-content">
-      <el-alert v-if="route.query.root" :title="`本次临时扫描范围：${route.query.root}`" type="info" :closable="false"><el-button text :disabled="scanning || removing" @click="router.replace({ path: '/large-files' })">使用保存的范围</el-button></el-alert>
-      <ScanScope :disabled="scanning || removing || !desktopConnected" :min-mb="preferences.large_min_mb" @update:min-mb="savePreferences({ large_min_mb: $event })" />
-      <ActionResults :report="result" />
+      <div v-if="desktopConnected" class="result-summary"><strong>{{ loaded ? formatSize(totalSize) : '尚未扫描' }}</strong><span>{{ largeFiles.length }} 个大文件 · {{ preferences.large_min_mb }} MB 起</span><div class="summary-actions"><SummaryDetails label="扫描设置" :count="route.query.root ? '1 个目录' : `${preferences.scan_roots.length || '常用'} 个目录`"><template v-if="route.query.root"><p class="detail-message" :title="String(route.query.root)">下次扫描：{{ route.query.root }}</p><el-button text :disabled="scanning || removing" @click="router.replace({ path: '/large-files' })">使用保存的范围</el-button></template><ScanScope embedded :disabled="scanning || removing || !desktopConnected" :min-mb="preferences.large_min_mb" @update:min-mb="savePreferences({ large_min_mb: $event })" /></SummaryDetails>
+        <SummaryDetails :label="error ? '扫描未完成' : '结果提示'" :count="warnings.length + (error ? 1 : 0)" :tone="error ? 'danger' : warnings.length ? 'warning' : undefined"><p v-if="error" class="detail-message danger">{{ error }}</p><p v-for="note in warnings" :key="note" class="detail-message warning">{{ note }}</p><p v-if="!error && !warnings.length">暂无结果提示</p><p v-if="scannedRoots.length">本次覆盖：{{ scannedRoots.join('、') }}</p></SummaryDetails><ActionResults :report="result" />
+      </div></div>
       <div v-if="!desktopConnected" class="empty-state"><span class="empty-icon"><Monitor :size="30" /></span><h2>给磁盘腾点空间</h2><p>请在桌面应用中打开，扫描本机的大文件。</p><span class="state-label">浏览器预览 · 尚未连接桌面端</span></div>
-      <div v-else-if="scanning"><ScanningRadar title="正在寻找空间大户" :sub-title="task?.path || '准备扫描…'" :tips="[]" /></div>
+      <div v-else-if="scanning"><ScanningRadar title="正在寻找空间大户" :sub-title="task?.path || '准备扫描…'" :tips="[]"><ScanAction initial :scanning="true" :task="task" :hint="`已检查 ${task?.current || 0} 个文件`" /></ScanningRadar></div>
       <template v-else>
-        <el-alert v-if="error" title="大文件扫描未完成" :description="error" type="error" :closable="false" show-icon />
         <template v-if="loaded">
-          <el-alert v-if="warnings.length" title="部分扫描范围未覆盖" :description="warnings.join('\n')" type="warning" :closable="false" show-icon />
-          <div class="result-summary"><strong>{{ formatSize(totalSize) }}</strong><span>{{ largeFiles.length }} 个大文件 · {{ preferences.large_min_mb }} MB 起</span></div>
           <div class="result-heading"><div><h2>文件明细</h2><p>按大小排列。选中前请核对名称与所在目录。</p></div><el-input v-model="search" placeholder="搜索文件或路径" clearable :disabled="removing" class="search-input"><template #prefix><Search :size="14" /></template></el-input></div>
           <div v-if="largeFiles.length" class="table-panel">
             <el-table ref="table" :data="filteredFiles" row-key="path" empty-text="没有匹配的文件" @selection-change="selectFiles">
@@ -86,9 +83,9 @@ onDeactivated(() => { if (cancelConfirmation) { ElMessageBox.close(); cancelConf
             </el-table>
           </div>
           <div v-else class="empty-state compact"><span class="empty-icon"><HardDrive :size="28" /></span><h2>这里没有空间大户</h2><p>本次已读取目录中，没有发现 {{ preferences.large_min_mb }} MB 以上的文件。</p></div>
-          <p v-if="largeFiles.length" class="footnote">覆盖：{{ scannedRoots.join('、') }}。容量为逻辑大小，移入废纸篓后需清空才能释放空间。</p>
+          <p v-if="largeFiles.length" class="footnote">容量为逻辑大小，移入废纸篓后需清空才能释放空间。</p>
         </template>
-        <div v-else-if="!error" class="empty-state"><span class="empty-icon"><HardDrive :size="30" /></span><h2>找出空间大户</h2><p>开始扫描，查看常用目录中的大文件。</p></div>
+        <div v-else-if="!error" class="empty-state"><span class="empty-icon"><HardDrive :size="30" /></span><h2>找出空间大户</h2><p>扫描所选目录，查看占用空间较大的文件。</p><ScanAction initial :scanning="false" :disabled="removing" label="开始扫描" @start="loadLargeFiles" /></div>
       </template>
     </div>
     <div v-if="selected.length && !scanning" class="selection-bar"><div><span>已选择 {{ selected.length }} 个文件</span><strong>{{ formatSize(selectedSize) }}</strong></div><div><el-button text @click="selectionDialog = true">查看已选</el-button><el-button type="primary" :loading="removing" @click="removeSelected"><Trash2 :size="15" />移入废纸篓</el-button></div></div>

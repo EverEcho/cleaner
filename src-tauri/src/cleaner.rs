@@ -115,7 +115,7 @@ fn normalize_excluded(paths: &[String]) -> Vec<PathBuf> {
             let value = PathBuf::from(path);
             value
                 .is_absolute()
-                .then(|| fs::canonicalize(&value).unwrap_or(value))
+                .then(|| platform::normalized_absolute(&value).unwrap_or(value))
         })
         .collect()
 }
@@ -125,6 +125,65 @@ fn excluded_target(path: &Path, excluded: &[PathBuf]) -> bool {
         .iter()
         .any(|root| path.starts_with(root) || root.starts_with(path))
 }
+// Split only ancestors of protected paths. Unrelated siblings stay whole cleanup targets.
+fn unprotected_targets(
+    path: &Path,
+    excluded: &[PathBuf],
+    cancelled: &dyn Fn() -> bool,
+    warnings: &mut Vec<String>,
+) -> Vec<PathBuf> {
+    let mut pending = vec![path.to_path_buf()];
+    let mut targets = Vec::new();
+    while let Some(path) = pending.pop() {
+        if cancelled() {
+            break;
+        }
+        let metadata = match fs::symlink_metadata(&path) {
+            Ok(metadata) if metadata.file_type().is_symlink() => continue,
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => {
+                warnings.push(format!("{}: {error}", path.display()));
+                continue;
+            }
+        };
+        let canonical = match fs::canonicalize(&path) {
+            Ok(path) => path,
+            Err(error) => {
+                warnings.push(format!("{}: {error}", path.display()));
+                continue;
+            }
+        };
+        if excluded
+            .iter()
+            .any(|root| canonical.starts_with(root) || path.starts_with(root))
+        {
+            continue;
+        }
+        if excluded
+            .iter()
+            .any(|root| root.starts_with(&canonical) || root.starts_with(&path))
+        {
+            if metadata.is_dir() {
+                match fs::read_dir(&path) {
+                    Ok(entries) => {
+                        for entry in entries {
+                            match entry {
+                                Ok(entry) => pending.push(entry.path()),
+                                Err(error) => warnings.push(format!("{}: {error}", path.display())),
+                            }
+                        }
+                    }
+                    Err(error) => warnings.push(format!("{}: {error}", path.display())),
+                }
+            }
+        } else {
+            targets.push(canonical);
+        }
+    }
+    targets
+}
+
 fn children_controlled(
     root: &Path,
     reason: &str,
@@ -150,11 +209,10 @@ fn children_controlled(
         }
         match entry {
             Ok(entry) => {
-                if !excluded_target(&entry.path(), excluded)
-                    && let Some(value) =
-                        item_controlled(&entry.path(), reason, selected, cancelled, report)
-                {
-                    result.push(value);
+                for path in unprotected_targets(&entry.path(), excluded, cancelled, warnings) {
+                    if let Some(value) = item_controlled(&path, reason, selected, cancelled, report) {
+                        result.push(value);
+                    }
                 }
             }
             Err(error) => warnings.push(format!("{}: {error}", root.display())),
@@ -274,20 +332,29 @@ pub fn scan_system_junk_controlled(
         ));
         let browser_items = browser_names()
             .iter()
-            .filter_map(|(name, p)| {
+            .flat_map(|(name, p)| {
                 let path = cache.join(p);
-                if cancelled() || excluded_target(&path, &excluded) {
-                    return None;
+                if cancelled() {
+                    return Vec::new();
                 }
-                let mut i = item_controlled(
-                    &path,
-                    "网页资源缓存；不包含密码、Cookie 和浏览记录",
-                    false,
-                    cancelled,
-                    &mut report,
-                )?;
-                i.name = format!("{name} 缓存");
-                Some(i)
+                unprotected_targets(&path, &excluded, cancelled, &mut warnings)
+                    .into_iter()
+                    .filter_map(|target| {
+                        let mut item = item_controlled(
+                            &target,
+                            "网页资源缓存；不包含密码、Cookie 和浏览记录",
+                            false,
+                            cancelled,
+                            &mut report,
+                        )?;
+                        item.name = if fs::canonicalize(&path).ok().as_ref() == Some(&target) {
+                            format!("{name} 缓存")
+                        } else {
+                            format!("{name} 缓存 · {}", item.name)
+                        };
+                        Some(item)
+                    })
+                    .collect::<Vec<_>>()
             })
             .collect();
         categories.push(category(
@@ -1293,6 +1360,71 @@ pub fn clean_item_details(path: &str) -> Result<Vec<crate::models::CleanFileDeta
     Ok(files)
 }
 
+// Refine an existing ordinary cleanup receipt after its keep list changes.
+// Developer artifacts and native system actions retain their own atomic validation.
+pub fn unprotected_clean_item_details(
+    path: &str,
+    excluded: &[String],
+) -> Result<Vec<crate::models::CleanFileDetail>, String> {
+    let original = Path::new(path);
+    let canonical = fs::canonicalize(original).map_err(|error| error.to_string())?;
+    if fs::symlink_metadata(original)
+        .map_err(|error| error.to_string())?
+        .file_type()
+        .is_symlink()
+    {
+        return Err("符号链接不作为清理目标".into());
+    }
+    let check = |receipt: &JunkReceipt| {
+        if !receipt.paths.contains(&canonical) || receipt.developer.contains_key(&canonical) {
+            Err("该目录不能拆分清理，请重新扫描确认范围".to_string())
+        } else {
+            Ok(())
+        }
+    };
+    {
+        let receipt = SCANNED_JUNK.lock().map_err(|error| error.to_string())?;
+        check(&receipt)?;
+    }
+    let mut warnings = Vec::new();
+    let targets = unprotected_targets(
+        &canonical,
+        &normalize_excluded(excluded),
+        &|| false,
+        &mut warnings,
+    );
+    if !warnings.is_empty() {
+        return Err(warnings.join("\n"));
+    }
+    let mut files = Vec::new();
+    for path in &targets {
+        if !path.starts_with(&canonical) {
+            return Err("清理范围已改变，请重新扫描".into());
+        }
+        let size = get_dir_or_file_size(path)?;
+        if size == 0 {
+            continue;
+        }
+        files.push(crate::models::CleanFileDetail {
+            name: path
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .into_owned(),
+            path: path.to_string_lossy().into_owned(),
+            size_bytes: size,
+            size_str: format_size(size),
+        });
+    }
+    files.sort_by_key(|file| std::cmp::Reverse(file.size_bytes));
+    let mut receipt = SCANNED_JUNK.lock().map_err(|error| error.to_string())?;
+    check(&receipt)?;
+    receipt
+        .paths
+        .extend(files.iter().map(|file| PathBuf::from(&file.path)));
+    Ok(files)
+}
+
 fn compute_file_sha256(path: &Path) -> Result<String, std::io::Error> {
     compute_file_sha256_controlled(path, &|| false)
 }
@@ -1526,6 +1658,137 @@ pub fn scan_developer_junk_controlled(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn cache_scan_splits_only_protected_ancestors() {
+        let root = std::env::temp_dir().join(format!("cleaner-keep-scan-{}", std::process::id()));
+        for directory in [
+            "JetBrains/IntelliJServer",
+            "JetBrains/IntelliJIdea2026.2",
+            "JetBrains/IntelliJServer-old",
+            "JetBrains/nested/keep",
+            "JetBrains/nested/other",
+            "OtherCache",
+        ] {
+            fs::create_dir_all(root.join(directory)).unwrap();
+            fs::write(root.join(directory).join("data"), b"123456789").unwrap();
+        }
+        fs::write(root.join("JetBrains/loose"), b"abc").unwrap();
+        let root = fs::canonicalize(root).unwrap();
+        let excluded = vec![
+            root.join("JetBrains/IntelliJServer"),
+            root.join("JetBrains/nested/keep"),
+        ];
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(
+            root.join("OtherCache"),
+            root.join("JetBrains/link"),
+        )
+        .unwrap();
+        let mut warnings = Vec::new();
+        let items = children_controlled(
+            &root,
+            "cache",
+            false,
+            &excluded,
+            &|| false,
+            &mut warnings,
+            &mut |_, _| {},
+        );
+        let names: HashSet<_> = items.iter().map(|item| item.name.as_str()).collect();
+        assert_eq!(
+            names,
+            HashSet::from([
+                "IntelliJIdea2026.2",
+                "IntelliJServer-old",
+                "other",
+                "loose",
+                "OtherCache"
+            ])
+        );
+        assert_eq!(items.iter().map(|item| item.size_bytes).sum::<u64>(), 39);
+        assert!(
+            items
+                .iter()
+                .all(|item| !excluded_target(Path::new(&item.path), &excluded))
+        );
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert!(unprotected_targets(&root, &[], &|| true, &mut Vec::new()).is_empty());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn keep_added_after_scan_authorizes_only_unprotected_siblings() {
+        let root = std::env::temp_dir().join(format!("cleaner-keep-refine-{}", std::process::id()));
+        fs::create_dir_all(root.join("JetBrains/IntelliJServer")).unwrap();
+        fs::create_dir_all(root.join("JetBrains/IntelliJIdea2026.2")).unwrap();
+        fs::write(root.join("JetBrains/IntelliJServer/data"), b"keep").unwrap();
+        fs::write(root.join("JetBrains/IntelliJIdea2026.2/data"), b"123456789").unwrap();
+        let root = fs::canonicalize(root).unwrap();
+        let parent = root.join("JetBrains");
+        let kept = parent.join("IntelliJServer");
+        let excluded = vec![kept.to_string_lossy().into_owned()];
+        SCANNED_JUNK.lock().unwrap().paths.insert(parent.clone());
+        assert!(unprotected_clean_item_details(root.to_str().unwrap(), &excluded).is_err());
+        {
+            let mut receipt = SCANNED_JUNK.lock().unwrap();
+            receipt
+                .developer
+                .insert(parent.clone(), (7, "fixture".into()));
+        }
+        assert!(unprotected_clean_item_details(parent.to_str().unwrap(), &excluded).is_err());
+        SCANNED_JUNK.lock().unwrap().developer.remove(&parent);
+        let files = unprotected_clean_item_details(parent.to_str().unwrap(), &excluded).unwrap();
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].name, "IntelliJIdea2026.2");
+        assert_eq!(files[0].size_bytes, 9);
+        assert!(
+            parent.join("IntelliJIdea2026.2/data").exists(),
+            "refinement must not delete anything"
+        );
+        let stale = delete_clean_items_controlled(
+            vec![parent.to_string_lossy().into_owned()],
+            &excluded,
+            |_, _, _| {},
+        )
+        .unwrap();
+        assert_eq!((stale.succeeded, stale.failed, stale.skipped), (0, 0, 1));
+        let report = delete_clean_items_controlled(
+            files.into_iter().map(|file| file.path).collect(),
+            &excluded,
+            |_, _, _| {},
+        )
+        .unwrap();
+        assert_eq!((report.succeeded, report.failed, report.skipped), (1, 0, 0));
+        assert_eq!(fs::read(kept.join("data")).unwrap(), b"keep");
+        assert!(parent.exists());
+        assert!(!parent.join("IntelliJIdea2026.2").exists());
+        assert!(
+            unprotected_clean_item_details(parent.to_str().unwrap(), &excluded)
+                .unwrap()
+                .is_empty()
+        );
+        SCANNED_JUNK.lock().unwrap().paths.remove(&parent);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn protected_child_alias_is_resolved_before_splitting() {
+        let root = std::env::temp_dir().join(format!("cleaner-keep-alias-{}", std::process::id()));
+        fs::create_dir_all(root.join("cache/keep")).unwrap();
+        fs::write(root.join("cache/other"), b"remove").unwrap();
+        std::os::unix::fs::symlink(root.join("cache"), root.join("alias")).unwrap();
+        let excluded =
+            normalize_excluded(&[root.join("alias/keep").to_string_lossy().into_owned()]);
+        let targets =
+            unprotected_targets(&root.join("cache"), &excluded, &|| false, &mut Vec::new());
+        assert_eq!(
+            targets,
+            vec![fs::canonicalize(root.join("cache/other")).unwrap()]
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
     #[test]
     fn changed_exclusions_protect_stale_receipts_and_report_completed_progress() {
         let root = std::env::temp_dir().join(format!("cleaner-execution-{}", std::process::id()));

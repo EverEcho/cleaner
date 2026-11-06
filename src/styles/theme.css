@@ -181,7 +181,7 @@ button:focus-visible, a:focus-visible { outline: 2px solid var(--cyan); outline-
 ::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 10px; }
 ::-webkit-scrollbar-thumb:hover { background: var(--accent); }
 .cleaner-shell { height: 100dvh; width: 100%; overflow: hidden; display: flex; flex-direction: column; position: relative; background: var(--bg); }
-.workspace { display: flex; flex: 1; min-height: 0; }
+.workspace { display: flex; flex: 1; min-width: 0; min-height: 0; }
 .sidebar { width: 208px; flex-shrink: 0; padding: 12px 13px 16px; border-right: 1px solid var(--line); display: flex; flex-direction: column; background: var(--sidebar-bg); }
 .brand { display: flex; align-items: center; gap: 11px; padding: 4px 12px 25px; text-decoration: none; color: var(--text); }
 .brand-symbol { width: 39px; height: 43px; border-radius: 13px; display: grid; place-items: center; color: var(--on-accent); background: var(--accent-strong); border: 1px solid var(--accent-border); box-shadow: inset 0 1px 2px rgba(var(--accent-rgb), 0.19), 0 6px 24px rgba(var(--accent-rgb), 0.19); transform: rotate(-5deg); }
@@ -266,3 +266,9 @@ button:focus-visible, a:focus-visible { outline: 2px solid var(--cyan); outline-
 .row-details code { white-space: pre-wrap; user-select: text; }
 .table-hint { color: var(--text-muted); font-size: 12px; line-height: 1.7; margin: 0; }
 .update-selection-bar { flex-shrink: 0; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 12px 28px; border-top: 1px solid var(--line); background: var(--surface); font-size: 12px; color: var(--text-secondary); }
+
+.summary-actions { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; margin-left: auto; min-width: 0; font-weight: 400; }
+.result-summary { min-width: 0; }
+.detail-message { margin: 0 0 12px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 9px; color: var(--text-muted); white-space: pre-line; }
+.detail-message.warning { color: var(--warning); border-color: var(--warning-border); background: var(--warning-soft); }
+.detail-message.danger { color: var(--danger); }

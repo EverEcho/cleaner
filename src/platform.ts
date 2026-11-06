@@ -1,4 +1,4 @@
-import { ref } from 'vue';
+import { computed, ref } from 'vue';
 import { invoke, isTauri } from '@tauri-apps/api/core';
 
 export interface PlatformInfo {
@@ -9,6 +9,8 @@ export interface PlatformInfo {
   authorization_cache_available: boolean;
 }
 export const platformInfo = ref<PlatformInfo | null>(null);
+// Browser previews retain all tools; native clients wait for confirmed support.
+export const desktopEntriesAvailable = computed(() => !isTauri() || platformInfo.value?.desktop_visibility === true);
 let pending: Promise<void> | undefined;
 export function loadPlatform() {
   if (!pending && isTauri()) {

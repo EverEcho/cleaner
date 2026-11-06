@@ -142,12 +142,28 @@ async fn analyze_disk(
     app: AppHandle,
     root: String,
     options: Option<ScanOptions>,
+    refresh: Option<bool>,
     task_id: Option<String>,
 ) -> Result<storage::DiskAnalysis, String> {
+    if !refresh.unwrap_or(false) {
+        // Browsing an existing snapshot is a read, not a new scan task.
+        return tauri::async_runtime::spawn_blocking(move || {
+            storage::analyze_cached(
+                &root,
+                &options.unwrap_or_default().excluded,
+                false,
+                &|| false,
+                |_, _, _| {},
+            )
+        })
+        .await
+        .map_err(|error| error.to_string())?;
+    }
     tracked(app, "analyze_disk", task_id, move |task| {
-        storage::analyze_controlled(
+        storage::analyze_cached(
             &root,
             &options.unwrap_or_default().excluded,
+            refresh.unwrap_or(false),
             &|| task.is_cancelled(),
             |path, current, total| scan_progress(task, path, current, total),
         )
@@ -420,10 +436,20 @@ async fn trash_files(
     .await
 }
 #[tauri::command]
-async fn get_clean_item_details(path: String) -> Result<Vec<models::CleanFileDetail>, String> {
-    tauri::async_runtime::spawn_blocking(move || cleaner::clean_item_details(&path))
-        .await
-        .map_err(|e| e.to_string())?
+async fn get_clean_item_details(
+    app: AppHandle,
+    path: String,
+    unprotected_only: Option<bool>,
+) -> Result<Vec<models::CleanFileDetail>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        if unprotected_only.unwrap_or(false) {
+            cleaner::unprotected_clean_item_details(&path, &preferences::load(&app)?.exclusions)
+        } else {
+            cleaner::clean_item_details(&path)
+        }
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 #[tauri::command]
 async fn check_software_updates(

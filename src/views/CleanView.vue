@@ -1,12 +1,13 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onDeactivated, watch } from 'vue';
-import { useRoute } from 'vue-router';
+import { useRoute, useRouter } from 'vue-router';
 import { invoke, isTauri } from '@tauri-apps/api/core';
 import { revealItemInDir } from '@tauri-apps/plugin-opener';
 import { ElMessage, ElMessageBox } from 'element-plus';
-import { ChevronDown, ChevronUp, Folder, File, Search, Copy, Settings, Blocks, Globe, Container, Braces, ShieldCheck, Sparkles, Monitor } from 'lucide-vue-next';
+import { ChevronDown, ChevronUp, Folder, File, Search, Copy, Settings, Blocks, Globe, Container, Braces, ShieldCheck, Sparkles, Monitor, HardDrive } from 'lucide-vue-next';
 import { platformInfo, loadPlatform } from '../platform';
 import PageHeader from '../layout/PageHeader.vue';
+import SummaryDetails from '../components/SummaryDetails.vue';
 import ScanAction from '../components/ScanAction.vue';
 import ScanningRadar from '../layout/ScanningRadar.vue';
 import ScanScope from '../components/ScanScope.vue';
@@ -20,7 +21,9 @@ interface CleanItem { id: string; path: string; name: string; size_bytes: number
 interface CleanCategory { warning?: string; scan_summary?: string; id: string; title: string; desc: string; total_size_bytes: number; total_size_str: string; count: number; items: CleanItem[] }
 const desktopAvailable = isTauri();
 const route = useRoute();
-const scanning = ref(desktopAvailable);
+const router = useRouter();
+const scanning = ref(false);
+const loaded = ref(false);
 const cleaning = ref(false);
 const authorizing = ref(false);
 const categories = ref<CleanCategory[]>([]);
@@ -34,6 +37,8 @@ const result = ref<ActionReport | null>(null);
 const search = ref('');
 const sortBySize = ref(true);
 const selectionDialog = ref(false);
+const exclusionsDialog = ref(false);
+const coverageDialog = ref(false);
 async function openDeveloper() {
   developerDialog.value = true;
 
@@ -48,6 +53,7 @@ async function scanDeveloper() {
     loadedDetails.value = new Set();
     expandedItems.value = new Set();
     expandedGroups.value = new Set([...expandedGroups.value, 'developer']);
+    loaded.value = true;
     developerDialog.value = false;
     if (category.warning) ElMessage.warning('部分目录未覆盖，已保留扫描结果；请查看列表提示');
     else ElMessage.success(`已统计 ${category.count} 项开发者垃圾，请查看详情后勾选清理`);
@@ -86,13 +92,15 @@ const groups = computed(() => [
   { id: 'developer', title: '开发者垃圾', icon: Braces, cats: ['developer'] },
   { id: 'browser', title: '上网垃圾', icon: Globe, cats: ['browser_cache'] },
   { id: 'docker', title: '容器垃圾', icon: Container, cats: ['docker'] },
-].map(group => ({ ...group, items: categories.value.filter(cat => group.cats.includes(cat.id)).flatMap(cat => cat.items).filter(item => `${item.name} ${item.path} ${item.reason} ${item.details || ''}`.toLowerCase().includes(search.value.toLowerCase())).sort((a, b) => sortBySize.value ? b.size_bytes - a.size_bytes : a.name.localeCompare(b.name)) })).filter(group => group.items.length > 0 || (!scanning.value && !scanError.value && group.id === 'applications')));
+].map(group => ({ ...group, items: categories.value.filter(cat => group.cats.includes(cat.id)).flatMap(cat => cat.items).filter(item => `${item.name} ${item.path} ${item.reason} ${item.details || ''}`.toLowerCase().includes(search.value.toLowerCase())).sort((a, b) => sortBySize.value ? b.size_bytes - a.size_bytes : a.name.localeCompare(b.name)) })).filter(group => group.items.length > 0));
+const hasScanItems = computed(() => categories.value.some(category => category.items.length > 0));
 const totalBytes = computed(() => categories.value.reduce((sum, cat) => sum + cat.total_size_bytes, 0));
 const selectedBytes = computed(() => categories.value.flatMap(cat => cat.items).reduce((sum, item) => sum + itemSelectedBytes(item), 0));
 const hasScanFailures = computed(() => categories.value.some(cat => cat.warning || cat.items.some(item => !item.size_known)));
 const selectedDetails = computed(() => categories.value.flatMap(cat => cat.items).flatMap(item => isDeveloperGroup(item) ? item.files.filter(file => fileSelected(item, file)) : selectedSet.value.has(item.path) ? [item] : []));
 const allItems = computed(() => categories.value.flatMap(cat => cat.items).filter(item => item.can_delete));
-const allSelected = computed(() => allItems.value.length > 0 && allItems.value.every(itemChecked));
+const visibleItems = computed(() => groups.value.flatMap(group => group.items).filter(item => item.can_delete));
+const allSelected = computed(() => visibleItems.value.length > 0 && visibleItems.value.every(itemChecked));
 function size(bytes: number) {
   if (bytes >= 1024 ** 3) return (bytes / 1024 ** 3).toFixed(2) + ' GB';
   if (bytes >= 1024 ** 2) return (bytes / 1024 ** 2).toFixed(1) + ' MB';
@@ -111,7 +119,7 @@ function toggleSelection(items: CleanItem[]) {
   }
   selected.value = [...set];
 }
-function toggleAll() { selected.value = allSelected.value ? [] : allItems.value.map(item => item.path); }
+function toggleAll() { toggleSelection(visibleItems.value); }
 function toggleGroup(id: string) { const set = new Set(expandedGroups.value); if (set.has(id)) set.delete(id); else set.add(id); expandedGroups.value = set; }
 async function toggleDetails(item: CleanItem) {
   const set = new Set(expandedItems.value);
@@ -129,7 +137,40 @@ async function toggleDetails(item: CleanItem) {
   finally { const pending = new Set(loadingDetails.value); pending.delete(item.id); loadingDetails.value = pending; }
 }
 async function copy(path: string) { try { await copyPath(path); ElMessage.success('路径已复制'); } catch (error) { ElMessage.error(String(error)); } }
-async function exclude(path: string) { await savePreferences({ exclusions: [...new Set([...preferences.exclusions, path])] }); ElMessage.success('已加入保留名单，下次扫描生效'); }
+function within(path: string, root: string) {
+  const base = root.replace(/\/+$/, '');
+  return path === base || path.startsWith(base + '/');
+}
+async function refreshKeptScopes() {
+  const affected = categories.value.flatMap(category => category.id === 'developer' ? [] : category.items
+    .filter(item => item.can_delete && !item.action && item.path.startsWith('/') && preferences.exclusions.some(path => within(item.path, path) || within(path, item.path)))
+    .map(item => ({ category, item })));
+  const scopes = await Promise.all(affected.map(async entry => ({
+    ...entry,
+    files: await invoke<FileDetail[]>('get_clean_item_details', { path: entry.item.path, unprotectedOnly: true }),
+  })));
+  const selection = new Set(selected.value);
+  for (const { category, item, files } of scopes) {
+    const wasSelected = selection.delete(item.path);
+    const replacements = files.map(file => ({ ...item, ...file, id: file.path, files: [], details: undefined }));
+    category.items = category.items.flatMap(current => current === item ? replacements : [current]);
+    category.total_size_bytes = category.items.reduce((sum, current) => sum + current.size_bytes, 0);
+    category.total_size_str = size(category.total_size_bytes);
+    category.count = category.items.length;
+    if (wasSelected) for (const file of files) selection.add(file.path);
+  }
+  selected.value = [...selection];
+}
+async function exclude(path: string) {
+  if (cleaning.value || scanning.value) return;
+  cleaning.value = true;
+  try {
+    await savePreferences({ exclusions: [...new Set([...preferences.exclusions, path])] });
+    await refreshKeptScopes();
+    ElMessage.success('已保留该路径，其余可清理项目已更新');
+  } catch (error) { ElMessage.error('保留名单或清理范围更新未完成：' + error); }
+  finally { cleaning.value = false; }
+}
 async function reveal(file: { path: string }) {
   try { await revealItemInDir(file.path); }
   catch (error) { ElMessage.error('无法查看位置: ' + error); }
@@ -147,11 +188,13 @@ async function authorize() {
   finally { authorizing.value = false; }
 }
 async function scan() {
-  if (cleaning.value) return;
+  if (!desktopAvailable || scanning.value || cleaning.value || developerScanning.value) return;
   scanning.value = true; scanError.value = '';
   categories.value = []; selected.value = []; expandedItems.value = new Set(); loadedDetails.value = new Set(); detailLimits.value = {};
   try {
+    await loadPreferences();
     categories.value = await runTask<CleanCategory[]>('scan_junk', { excluded: preferences.exclusions });
+    loaded.value = true;
     selected.value = categories.value.flatMap(cat => cat.items).filter(item => item.can_delete && item.selected).map(item => item.path);
   } catch (error) { scanError.value = String(error); }
   finally { scanning.value = false; }
@@ -159,14 +202,16 @@ async function scan() {
 let cancelConfirmation: (() => void) | undefined;
 async function clean() {
   if (!selected.value.length || cleaning.value || authorizing.value || cancelConfirmation) return;
+  cleaning.value = true;
   try {
+    await refreshKeptScopes();
+    if (!selected.value.length) { ElMessage.warning('所选项目已在保留名单中，没有需要清理的内容'); return; }
     const scope = allItems.value.filter(item => item.action && selectedSet.value.has(item.path)).map(item => `${item.name}：${item.reason}`).join('\n');
     await Promise.race([
       ElMessageBox.confirm(`清理所选 ${selected.value.length} 项？缓存和系统清理无法撤销。${scope ? '\n' + scope : ''}`, '确认清理', { type: 'warning', confirmButtonText: '立即清理', cancelButtonText: '取消' }),
       new Promise<never>((_, reject) => { cancelConfirmation = () => reject('cancel'); }),
     ]);
     cancelConfirmation = undefined;
-    cleaning.value = true;
     result.value = await runTask<ActionReport>('clean_items', { paths: selected.value });
     const done = new Set(result.value.items.filter(item => item.status === 'success').map(item => item.path));
     const preserved = new Set(result.value.items.filter(item => item.status === 'skipped').map(item => item.path));
@@ -190,16 +235,22 @@ async function clean() {
   } catch (error) { if (error !== 'cancel' && error !== 'close') ElMessage.error('清理失败: ' + error); }
   finally { cancelConfirmation = undefined; cleaning.value = false; }
 }
-watch(() => route.query.scan, value => {
-  if (route.path === '/clean' && value && desktopAvailable && !scanning.value && !cleaning.value && !authorizing.value && !developerScanning.value) scan();
-});
+async function consumeScanRequest() {
+  if (route.path !== '/clean' || !route.query.scan || !desktopAvailable) return;
+  const { scan: _scan, ...query } = route.query;
+  await router.replace({ path: '/clean', query });
+  await scan();
+}
+watch(() => route.query.scan, consumeScanRequest);
 onMounted(async () => {
   if (!desktopAvailable) return;
-  await Promise.all([loadPlatform().catch(() => {}), loadPreferences()]);
-  await scan();
+  await loadPlatform().catch(() => {});
+  await consumeScanRequest();
 });
 onDeactivated(() => {
   if (cancelConfirmation) { ElMessageBox.close(); cancelConfirmation(); cancelConfirmation = undefined; }
+  exclusionsDialog.value = false;
+  coverageDialog.value = false;
   if (!developerScanning.value) developerDialog.value = false;
 });
 </script>
@@ -208,26 +259,40 @@ onDeactivated(() => {
   <main class="clean-page">
     <PageHeader title="垃圾清理" subtitle="找回磁盘空间，让系统轻装运行。">
       <template #actions>
-          <el-dropdown trigger="click" :disabled="!desktopAvailable || scanning || cleaning || authorizing || developerScanning"><el-button text :disabled="!desktopAvailable || scanning || cleaning || authorizing || developerScanning">更多<ChevronDown :size="14" /></el-button><template #dropdown><el-dropdown-menu><el-dropdown-item @click="openDeveloper"><Braces :size="14" />开发者扫描</el-dropdown-item><el-dropdown-item @click="authorize"><ShieldCheck :size="14" />{{ authorizing ? '正在授权…' : '管理员授权' }}</el-dropdown-item><el-dropdown-item divided @click="sortBySize = !sortBySize">{{ sortBySize ? '改为按名称排序' : '改为按大小排序' }}</el-dropdown-item></el-dropdown-menu></template></el-dropdown>
-        <ScanAction :scanning="scanning" :task="task" :disabled="!desktopAvailable || cleaning || authorizing || developerScanning" :hint="`已检查 ${task?.current || 0} 个文件`" @start="scan" />
+          <el-dropdown trigger="click" :disabled="!desktopAvailable || scanning || cleaning || authorizing || developerScanning"><el-button text :disabled="!desktopAvailable || scanning || cleaning || authorizing || developerScanning">更多<ChevronDown :size="14" /></el-button><template #dropdown><el-dropdown-menu><el-dropdown-item @click="openDeveloper"><Braces :size="14" />开发者扫描</el-dropdown-item><el-dropdown-item @click="authorize"><ShieldCheck :size="14" />{{ authorizing ? '正在授权…' : '管理员授权' }}</el-dropdown-item></el-dropdown-menu></template></el-dropdown>
+        <ScanAction v-if="!scanning && (loaded || scanError)" :scanning="scanning" :task="task" :disabled="!desktopAvailable || cleaning || authorizing || developerScanning" :hint="`已检查 ${task?.current || 0} 个文件`" :label="scanError ? '重试扫描' : '重新扫描'" @start="scan" />
       </template>
     </PageHeader>
     <div class="clean-content">
       <div v-if="!desktopAvailable" class="desktop-notice"><Monitor :size="38" /><h2>连接你的电脑，开启清理</h2><p>请在 AppClear 桌面应用中扫描本机文件。</p><span>浏览器预览不会读取你的磁盘</span></div>
       <template v-else>
-        <div class="result-summary"><strong>{{ scanError ? '扫描未完成' : scanning ? '正在扫描…' : size(totalBytes) }} <small v-if="!scanError && !scanning">扫描结果</small></strong><span>{{ scanning ? '完成后选择要清理的项目' : '扫描时逻辑大小 · 实际释放空间可能不同' }}<template v-if="!scanning && hasScanFailures"> · 部分项目待核对</template></span></div>
-        <div class="list-toolbar">
-          <el-checkbox :model-value="allSelected" :disabled="scanning || cleaning || !allItems.length" @change="toggleAll">全部选择</el-checkbox>
-          <el-input v-model="search" clearable placeholder="搜索项目或路径" :disabled="cleaning" class="clean-search"><template #prefix><Search :size="14" /></template></el-input>
+        <div class="scan-overview">
+          <div class="overview-symbol"><HardDrive :size="29" /><span /></div>
+          <div class="overview-copy">
+            <h2>{{ scanError ? '扫描未完成' : scanning ? '正在扫描…' : loaded ? size(totalBytes) : '尚未扫描' }}</h2>
+            <p>{{ scanning ? '完成后选择要清理的项目' : loaded ? '扫描时逻辑大小 · 实际释放空间可能不同' : '扫描本机缓存，完成后选择要清理的项目。' }}<span v-if="!scanning && hasScanFailures" class="scan-failure"> · 部分项目待核对</span></p>
+          </div>
+          <div class="overview-tools">
+            <span class="overview-status"><ShieldCheck :size="14" />先确认，再清理</span>
+            <div class="overview-counts">
+              <ActionResults :report="result" />
+              <SummaryDetails v-if="scanError" label="扫描未完成" :count="1" tone="danger"><p>{{ scanError }}</p></SummaryDetails>
+              <button type="button" @click="exclusionsDialog = true">保留名单 <strong>{{ preferences.exclusions.length }}</strong></button>
+              <button type="button" :class="{ 'has-warnings': scanWarnings.length }" @click="coverageDialog = true">扫描覆盖提示 <strong>{{ scanWarnings.length }}</strong></button>
+            </div>
+          </div>
+        </div>
+        <div v-if="loaded && !scanning && !scanError" class="list-toolbar">
+          <el-checkbox :model-value="allSelected" :indeterminate="groupPartial(visibleItems)" :disabled="scanning || cleaning || !visibleItems.length" @change="toggleAll">{{ search ? '选择搜索结果' : '全部选择' }}</el-checkbox>
+          <el-input v-model="search" clearable placeholder="搜索项目或路径" aria-label="搜索清理项目或路径" :disabled="cleaning" class="clean-search"><template #prefix><Search :size="14" /></template></el-input>
+          <el-switch v-model="sortBySize" active-text="按大小排序" aria-label="按大小排序" :disabled="cleaning" />
         </div>
         <div class="clean-list" :aria-busy="scanning">
-          <ScanScope exclusions-only :disabled="scanning || cleaning || developerScanning" />
-          <ActionResults :report="result" />
 
-          <el-alert v-if="scanError" title="扫描未完成" :description="scanError" type="error" :closable="false" />
-          <details v-for="category in scanWarnings" :key="category.id" class="developer-warning"><summary>扫描覆盖提示 · 查看未覆盖目录</summary><p>{{ category.scan_summary }}</p><p>{{ category.warning }}</p></details>
-          <div v-if="scanning && !groups.length" class="scan-state"><ScanningRadar title="正在探索你的磁盘" :sub-title="task?.path || '准备扫描…'" :tips="[]" /></div>
-          <div v-if="!scanning && !scanError && !groups.length" class="clean-empty"><Sparkles :size="35" /><h3>{{ hasScanFailures ? '扫描只覆盖了部分范围' : '空间已经很轻盈' }}</h3><p>{{ hasScanFailures ? '已读取范围内没有可清理项目，请查看覆盖提示后继续扫描。' : '本次扫描没有发现可清理的文件。' }}</p></div>
+          <div v-if="scanning && !groups.length" class="scan-state"><ScanningRadar title="正在探索你的磁盘" :sub-title="task?.path || '准备扫描…'" :tips="[]"><ScanAction initial :scanning="true" :task="task" :hint="`已检查 ${task?.current || 0} 个文件`" /></ScanningRadar></div>
+          <div v-if="!scanning && !loaded && !scanError" class="clean-empty"><Sparkles :size="35" /><h3>先扫描，再选择清理</h3><p>扫描本机缓存，完成后选择要清理的项目。</p><ScanAction initial :scanning="false" :disabled="cleaning || authorizing || developerScanning" label="开始扫描" @start="scan" /></div>
+          <div v-if="!scanning && scanError" class="clean-empty"><Sparkles :size="35" /><h3>扫描未完成</h3><p>请查看上方提示后重试扫描。</p></div>
+          <div v-if="loaded && !scanning && !scanError && !groups.length" class="clean-empty"><Sparkles :size="35" /><h3>{{ hasScanItems ? '没有匹配的项目' : hasScanFailures ? '扫描只覆盖了部分范围' : '空间已经很轻盈' }}</h3><p>{{ hasScanItems ? '尝试其他名称或路径。' : hasScanFailures ? '已读取范围内没有可清理项目，请查看覆盖提示后继续扫描。' : '本次扫描没有发现可清理的文件。' }}</p></div>
           <section v-for="group in groups" :key="group.id" class="clean-group">
             <button class="group-heading" @click="toggleGroup(group.id)"><span class="group-icon" :class="group.id"><component :is="group.icon" :size="18" /></span><span class="group-title"><strong>{{ group.title }}</strong><small>{{ group.items.length }} 个清理项目</small></span><span class="group-total">{{ size(groupBytes(group.items)) }}<small>已选 {{ size(groupBytes(group.items, true)) }}</small></span><span v-if="!group.items.length" class="clean-status">很干净</span><ChevronUp v-if="expandedGroups.has(group.id)" :size="16" class="heading-chevron" /><ChevronDown v-else :size="16" class="heading-chevron" /></button>
             <div v-if="expandedGroups.has(group.id)" class="group-items">
@@ -253,6 +318,17 @@ onDeactivated(() => {
       </template>
     </div>
     <footer v-if="desktopAvailable && !scanning && selected.length" class="clean-action-bar"><div class="selection-copy"><span class="selection-icon"><Sparkles :size="19" /></span><div><strong>{{ size(selectedBytes) }} <small>预计可回收</small></strong><p>已选择 {{ selected.length }} 项 · 扫描时逻辑大小</p></div></div><button class="quiet-button" @click="selectionDialog = true">查看已选</button><button class="primary-clean" :disabled="!selected.length || cleaning || authorizing || developerScanning" @click="clean"><Sparkles :size="17" />{{ cleaning ? '正在清理…' : '清理所选' }}</button></footer>
+    <el-dialog v-model="exclusionsDialog" title="保留名单" width="min(680px, calc(100vw - 40px))">
+      <div class="scan-details-body"><ScanScope embedded exclusions-only :disabled="scanning || cleaning || developerScanning" /></div>
+      <template #footer><el-button @click="exclusionsDialog = false">关闭</el-button></template>
+    </el-dialog>
+    <el-dialog v-model="coverageDialog" title="扫描覆盖提示" width="min(680px, calc(100vw - 40px))">
+      <div class="scan-details-body">
+        <section v-for="category in scanWarnings" :key="category.id" class="developer-warning"><h3>{{ category.title || category.id }}</h3><p v-if="category.scan_summary">{{ category.scan_summary }}</p><p>{{ category.warning }}</p></section>
+        <p v-if="!scanWarnings.length" class="developer-note">{{ scanning ? '扫描进行中，覆盖提示将在结果返回后显示。' : loaded ? '本次扫描没有覆盖提示。' : '尚未扫描，完成后可在这里查看未覆盖的范围。' }}</p>
+      </div>
+      <template #footer><el-button @click="coverageDialog = false">关闭</el-button></template>
+    </el-dialog>
     <el-dialog v-model="developerDialog" title="开发者深度扫描" width="520px" :close-on-click-modal="!developerScanning" :close-on-press-escape="!developerScanning" :show-close="!developerScanning">
       <div class="developer-dialog-body"><p class="developer-note">扫描历史包缓存与项目构建产物，统计实际大小和路径，结果加入本页垃圾列表。所有项目默认不勾选。</p>
       <el-form label-position="top">
@@ -280,11 +356,21 @@ onDeactivated(() => {
 .eyebrow { color: var(--text-muted); font-size: 9px; letter-spacing: 2px; }
 .overview-copy h2 { margin: 5px 0 3px; font-size: 34px; line-height: 1.15; font-weight: 600; letter-spacing: -1px; }
 .overview-copy p { font-size: 12px; color: var(--text-muted); margin: 6px 0 0; }
+.overview-tools { display: flex; flex-direction: column; align-items: flex-end; gap: 13px; min-width: 0; max-width: 50%; flex-shrink: 1; }
+.overview-counts { display: flex; align-items: center; justify-content: flex-end; gap: 8px 16px; flex-wrap: wrap; }
+.overview-counts button { display: inline-flex; align-items: center; gap: 7px; border: 0; background: none; padding: 4px 0; color: var(--text-muted); font: inherit; font-size: 11px; cursor: pointer; }
+.overview-counts button:hover { color: var(--accent); }
+.overview-counts button:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; border-radius: 3px; }
+.overview-counts strong { font-size: 12px; font-variant-numeric: tabular-nums; }
+.overview-counts .has-warnings { color: var(--warning); }
+.scan-details-body { max-height: 55vh; overflow: auto; }
 .overview-status { display: flex; align-items: center; gap: 7px; color: var(--text-muted); font-size: 11px; white-space: nowrap; align-self: flex-start; margin-top: 4px; }
 .overview-status svg { color: var(--cyan); }
+@media (max-width: 760px) { .scan-overview { flex-wrap: wrap; } .overview-tools { width: 100%; max-width: 100%; flex-direction: row; justify-content: space-between; align-items: center; } .overview-status { align-self: center; margin: 0; } }
 .scan-failure { color: var(--warning); }
-.clean-search { max-width: 280px; }
-.list-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 17px 3px; flex-shrink: 0; flex-wrap: wrap; }
+.clean-search { flex: 0 1 320px; min-width: 160px; margin-left: auto; }
+.list-toolbar { display: flex; align-items: center; gap: 16px; padding: 17px 3px; flex-shrink: 0; }
+.list-toolbar > .el-checkbox, .list-toolbar > .el-switch { flex-shrink: 0; margin-right: 0; }
 .toolbar-actions { display: flex; gap: 9px; flex-wrap: wrap; }
 .quiet-button { display: inline-flex; align-items: center; gap: 7px; border: 1px solid var(--line); border-radius: 8px; color: var(--text-secondary); background: var(--surface-subtle); padding: 8px 11px; font-size: 11px; font-family: inherit; cursor: pointer; transition: background .18s, border-color .18s; }
 .quiet-button:hover { background: var(--accent-soft); border-color: var(--accent-border); color: var(--text); }
@@ -346,11 +432,12 @@ onDeactivated(() => {
 .clean-empty p, .desktop-notice p { color: var(--text-muted); font-size: 13px; margin: 0; }
 .desktop-notice span { margin-top: 10px; color: var(--text-faint); font-size: 11px; }
 .developer-warning { margin: 0 0 14px; padding: 12px 15px; font-size: 12px; color: var(--warning); background: var(--warning-soft); border: 1px solid var(--warning-border); border-radius: 10px; overflow-wrap: anywhere; }
-.developer-warning summary { cursor: pointer; }
+.developer-warning h3 { margin: 0; font-size: 13px; font-weight: 500; }
 .developer-warning p { white-space: pre-line; line-height: 1.7; }
 .developer-scan-state { font-size: 12px; color: var(--text-muted); }
 .developer-note { font-size: 12px; line-height: 1.8; color: var(--text-muted); }
 .developer-roots { display: flex; gap: 6px; flex-wrap: wrap; margin: -8px 0 16px; }
-@media (max-width: 900px) { .clean-content { padding: 16px 20px 0; } .scan-overview { padding: 18px; gap: 15px; } .overview-status { display: none; } .overview-copy h2 { font-size: 29px; } .clean-action-bar { padding: 16px 20px; } .selection-copy p { max-width: 250px; line-height: 1.6; } .primary-clean { padding: 16px 20px 0; } }
+@media (max-width: 900px) { .clean-content { padding: 16px 20px 0; } .scan-overview { padding: 18px; gap: 15px; } .overview-tools { display: flex; flex-direction: column; align-items: flex-end; gap: 13px; flex-shrink: 0; }
+.overview-symbol { width: 48px; height: 48px; border-radius: 15px; flex-shrink: 0; } .overview-counts { gap: 10px; } .overview-copy h2 { font-size: 29px; } .clean-action-bar { padding: 16px 20px; } .selection-copy p { max-width: 250px; line-height: 1.6; } .primary-clean { padding: 16px 20px 0; } }
 @media (prefers-reduced-motion: reduce) { .primary-clean, .quiet-button { transition: none; } }
 </style>

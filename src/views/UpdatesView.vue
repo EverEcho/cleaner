@@ -6,6 +6,7 @@ import { ElMessage, ElMessageBox } from 'element-plus';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import { ChevronDown, Search, Monitor, CircleCheck, TriangleAlert, ExternalLink, ListOrdered } from 'lucide-vue-next';
 import PageHeader from '../layout/PageHeader.vue';
+import SummaryDetails from '../components/SummaryDetails.vue';
 import ScanAction from '../components/ScanAction.vue';
 import ScanningRadar from '../layout/ScanningRadar.vue';
 import { runTask, activeTask } from '../tasks';
@@ -55,7 +56,7 @@ async function copyHint(tool: ToolUpdate) {
 }
 async function showSource(tool: ToolUpdate) { try { await openUrl(tool.source_url); } catch (error) { ElMessage.error('打开软件源失败: '+error); } }
 async function checkUpdates() {
-  if (checking.value || queueRunning.value) return;
+  if (!desktopAvailable || checking.value || queueRunning.value) return;
   checking.value = true; errorMessage.value = ''; log('读取系统软件源与每个工具安装实例…');
   try {
     const report = await runTask<UpdateReport>('check_software_updates');
@@ -112,7 +113,7 @@ async function runQueue(items: QueueItem[]) {
   }
 }
 function upgradeSelected() { return runQueue([...selectedPackages.value.map(packageQueue),...selectedTools.value.map(toolQueue)]); }
-onMounted(() => { if (!desktopAvailable) return; listen<string>('update-log', event => log(event.payload)).then(stop => { if (disposed) stop(); else unlisten = stop; }).catch(() => {}); checkUpdates(); });
+onMounted(() => { if (!desktopAvailable) return; listen<string>('update-log', event => log(event.payload)).then(stop => { if (disposed) stop(); else unlisten = stop; }).catch(() => {}); });
 onUnmounted(() => { disposed = true; unlisten?.(); });
 onActivated(() => { pageActive = true; });
 onDeactivated(() => { pageActive = false; if (cancelMessageBox) { ElMessageBox.close(); cancelMessageBox(); cancelMessageBox = undefined; } });
@@ -123,22 +124,25 @@ onDeactivated(() => { pageActive = false; if (cancelMessageBox) { ElMessageBox.c
     <PageHeader title="软件更新" subtitle="每个安装实例独立检测，按原渠道有序更新。">
       <template #actions>
         <el-dropdown trigger="click" :disabled="!desktopAvailable || busy"><el-button text :disabled="!desktopAvailable || busy">更多<ChevronDown :size="14" /></el-button><template #dropdown><el-dropdown-menu><el-dropdown-item @click="refreshSources">刷新软件源</el-dropdown-item></el-dropdown-menu></template></el-dropdown>
-        <ScanAction :scanning="checking" :task="checkTask" :disabled="!desktopAvailable || refreshing || queueRunning" hint="检测中，可切换页面" label="检查更新" stop-label="停止检测" @start="checkUpdates" />
+        <ScanAction v-if="!checking && !refreshing && (checkedAt || errorMessage)" :scanning="checking" :task="checkTask" :disabled="!desktopAvailable || refreshing || queueRunning" hint="检测中，可切换页面" :label="errorMessage ? '重试检测' : '重新检查'" stop-label="停止检测" @start="checkUpdates" />
       </template>
     </PageHeader>
     <div class="subpage-content">
       <div v-if="!desktopAvailable" class="desktop-notice"><Monitor :size="38" /><h2>让你的软件保持常新</h2><p>请在 AppClear 桌面应用中检测本机软件更新。</p><span>浏览器预览不会访问安装渠道</span></div>
+      <div v-else-if="!checking && !refreshing && !checkedAt && !errorMessage" class="desktop-notice"><CircleCheck :size="38" /><h2>按需检查软件更新</h2><p>检测已安装的软件，按需选择更新项目。</p><ScanAction initial :scanning="false" :disabled="queueRunning" label="检查更新" @start="checkUpdates" /></div>
       <template v-else>
-        <div class="result-summary"><strong>{{ checkedAt ? availableCount : '—' }} <small>项可用更新</small></strong><span>{{ checkedAt ? `最近检测 ${timeLabel(checkedAt)}` : '尚未完成检测' }} · {{ completedChannels }} 个渠道完成</span></div>
-        <div v-if="checking || refreshing" class="update-scan-state"><ScanningRadar :title="refreshing ? '正在刷新软件源…' : '正在检查各个安装渠道…'" :sub-title="checkTask?.phase || currentLog" /></div>
-        <el-alert v-if="errorMessage" :title="errorMessage" type="error" :closable="false" />
-        <details v-if="channels.length || warnings.length" class="channel-panel"><summary>检测范围 · {{ completedChannels }} / {{ channels.length }} 个渠道完成<span v-if="channels.some(channel => ['failed','unsupported','cancelled'].includes(channel.state))"> · 有未完成渠道</span><span v-if="warnings.length"> · {{ warnings.length }} 条提示</span></summary><el-button text :disabled="busy" @click="refreshSources">刷新软件源并重查</el-button><p v-for="warning in warnings" :key="warning" class="coverage-hint">{{ warning }}</p><div class="channel-grid"><article v-for="channel in channels" :key="channel.id" class="channel-card"><div><b>{{ providerLabels[channel.provider] ?? channel.provider.toUpperCase() }}</b><span :class="channel.state">{{ channelLabels[channel.state] ?? channel.state }}</span></div><p>{{ channel.message }}</p><small>{{ timeLabel(channel.checked_at) }}<template v-if="channel.cache_seconds"> · 上游缓存最多 {{ channel.cache_seconds / 60 }} 分钟</template></small><code v-if="channel.source_path">{{ channel.source_path }}</code></article></div></details>
+        <div class="result-summary"><strong>{{ checkedAt ? availableCount : '—' }} <small>项可用更新</small></strong><span>{{ checkedAt ? `最近检测 ${timeLabel(checkedAt)}` : '尚未完成检测' }} · {{ completedChannels }} 个渠道完成</span><div class="summary-actions">
+          <SummaryDetails label="检测范围" :count="channels.length"><p>{{ completedChannels }} / {{ channels.length }} 个渠道完成</p><el-button text :disabled="busy" @click="refreshSources">刷新软件源并重查</el-button><div class="channel-grid"><article v-for="channel in channels" :key="channel.id" class="channel-card"><div><b>{{ providerLabels[channel.provider] ?? channel.provider.toUpperCase() }}</b><span :class="channel.state">{{ channelLabels[channel.state] ?? channel.state }}</span></div><p>{{ channel.message }}</p><small>{{ timeLabel(channel.checked_at) }}<template v-if="channel.cache_seconds"> · 上游缓存最多 {{ channel.cache_seconds / 60 }} 分钟</template></small><code v-if="channel.source_path" :title="channel.source_path">{{ channel.source_path }}</code></article></div></SummaryDetails>
+          <SummaryDetails :label="errorMessage ? '检测未完成' : '结果提示'" :count="warnings.length + (errorMessage ? 1 : 0)" :tone="errorMessage ? 'danger' : warnings.length ? 'warning' : undefined"><p v-if="errorMessage" class="detail-message danger">{{ errorMessage }}</p><p v-for="warning in warnings" :key="warning" class="detail-message warning">{{ warning }}</p><p v-if="!errorMessage && !warnings.length">暂无结果提示</p><p>未完成检测的渠道不代表没有更新；无法直接更新的项目提供原渠道建议。</p></SummaryDetails>
+          <SummaryDetails v-if="logs.length" label="任务日志" :count="logs.length"><pre>{{ logs.join('\n') }}</pre></SummaryDetails>
+        </div></div>
+        <div v-if="checking || refreshing" class="update-scan-state"><ScanningRadar :title="checking ? '正在检查各个安装渠道…' : '正在刷新软件源…'" :sub-title="checkTask?.phase || currentLog"><ScanAction v-if="checking" initial :scanning="true" :task="checkTask" hint="检测中，可切换页面" stop-label="停止检测" /></ScanningRadar></div>
 
+        <template v-if="!checking && !refreshing">
         <section v-if="queue.length" class="queue-panel"><div class="queue-heading"><h3><ListOrdered :size="16" />更新队列</h3><el-button v-if="queueRunning" :disabled="stopRequested" size="small" @click="stopRequested = true">{{ stopRequested ? '当前项目结束后停止' : '停止后续' }}</el-button><el-button v-else-if="failedQueue.length" :disabled="checking || refreshing" size="small" @click="runQueue(failedQueue)">仅重试失败项（{{ failedQueue.length }}）</el-button></div><article v-for="item in queue" :key="item.id" class="queue-row"><span :class="item.state">{{ queueLabels[item.state] }}</span><strong>{{ item.name }}</strong><small>{{ providerLabels[item.provider] ?? item.provider }}<template v-if="item.package?.arch"> · {{ item.package.arch }}</template> → {{ item.target }}</small><p v-if="item.message">{{ item.message }}</p></article></section>
 
         <div class="updates-toolbar"><el-input v-model="search" placeholder="搜索软件、来源或安装路径" clearable class="update-search"><template #prefix><Search :size="15" /></template></el-input><el-select v-model="filterManager" class="manager-filter"><el-option label="所有安装渠道" value="all" /><el-option v-for="manager in availableManagers" :key="manager" :label="providerLabels[manager] ?? manager.toUpperCase()" :value="manager" /></el-select></div>
         <div class="section-heading"><h3>系统软件包</h3><span>{{ updates.length }} 项候选更新</span></div>
-        <p class="update-note">未完成检测的渠道不代表没有更新；无法直接更新的项目提供原渠道建议。</p>
         <div class="data-table"><el-table :data="filteredUpdates" :row-key="packageKey" empty-text="此范围内没有系统更新候选项" @selection-change="(rows: UpgradablePkg[]) => selectedPackages = rows">
           <el-table-column type="selection" width="44" :selectable="(row: UpgradablePkg) => canUpgradePackage(row) && !busy" /><el-table-column type="expand" width="40"><template #default="{row}"><div class="row-details"><span>架构：{{ row.arch || '未知' }} · 来源 / 分支：{{ row.repository || '未知' }}</span></div></template></el-table-column>
           <el-table-column label="软件包" min-width="150"><template #default="{row}"><span>{{ row.name }}</span><small v-if="row.arch" class="package-arch">{{ row.arch }}</small></template></el-table-column>
@@ -161,12 +165,13 @@ onDeactivated(() => { pageActive = false; if (cancelMessageBox) { ElMessageBox.c
           <el-table-column label="状态" min-width="115"><template #default="{row}"><el-tag :type="toolStatuses[row.status]?.type ?? 'info'" size="small">{{ toolStatuses[row.status]?.label ?? '需核对' }}</el-tag></template></el-table-column>
           <el-table-column label="操作" width="110"><template #default="{row}"><el-button v-if="canUpgradeTool(row)" size="small" :disabled="busy" @click="runQueue([toolQueue(row)])">更新此项</el-button><el-button v-else size="small" @click="copyHint(row)">复制建议</el-button></template></el-table-column>
         </el-table></div>
-        <details v-if="logs.length" class="execution-logs"><summary>{{ queueRunning ? '正在执行' : '任务日志' }} · {{ currentLog }}</summary><pre>{{ logs.join('\n') }}</pre></details>
+
         <div v-if="checkedAt && !checking && !availableCount && completedChannels" class="empty-status"><span class="empty-symbol"><CircleCheck :size="34" /></span><div class="empty-title">已完成检测的渠道未发现更新</div><div class="empty-sub">{{ completedChannels }} 个渠道完成检测；其余渠道的状态见上方覆盖信息。</div></div>
         <div v-if="checkedAt && !completedChannels && !checking" class="empty-status"><span class="empty-symbol is-error"><TriangleAlert :size="34" /></span><div class="empty-title">尚无渠道完成检测</div><div class="empty-sub">检查上方每个渠道的原因后重试。</div></div>
+        </template>
       </template>
     </div>
-    <div v-if="selectedCount" class="update-selection-bar"><span>已选择 {{ selectedCount }} 项更新</span><el-button type="primary" :disabled="busy" @click="upgradeSelected">更新所选</el-button></div>
+    <div v-if="selectedCount && !checking && !refreshing" class="update-selection-bar"><span>已选择 {{ selectedCount }} 项更新</span><el-button type="primary" :disabled="busy" @click="upgradeSelected">更新所选</el-button></div>
   </div>
 </template>
 <style scoped>

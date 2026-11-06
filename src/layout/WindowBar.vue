@@ -35,9 +35,9 @@ async function windowAction(action: 'close' | 'minimize' | 'maximize' | 'drag') 
 
 <style scoped>
 .window-bar { min-height: 56px; flex-shrink: 0; display: flex; align-items: center; position: relative; border-bottom: 1px solid var(--line); background: var(--surface); }
-.window-controls { display: flex; gap: 8px; padding: 12px 21px; width: 208px; flex-shrink: 0; pointer-events: none; }
+.window-controls { display: flex; gap: 8px; padding: 12px 0 12px 21px; flex-shrink: 0; pointer-events: none; }
 .window-controls button { pointer-events: auto; }
-.page-titlebar { flex: 1; min-width: 0; padding: 8px 28px; }
+.page-titlebar { flex: 1; min-width: 0; padding: 8px 28px 8px 20px; }
 .window-title { color: var(--text-faint); font-size: 12px; pointer-events: none; }
 .window-title span { color: var(--text-faint); padding: 0 8px; }
 .control { border: 0; padding: 0; width: 12px; height: 12px; border-radius: 50%; display: grid; place-items: center; cursor: pointer; }
@@ -45,6 +45,5 @@ async function windowAction(action: 'close' | 'minimize' | 'maximize' | 'drag') 
 .control span { opacity: 0; font-size: 11px; color: #634b30; line-height: 12px; }
 .window-controls:hover span, .control:focus-visible span { opacity: 1; }
 .control:disabled { cursor: default; }
-@media (max-width: 960px) { .window-controls { width: 184px; } .page-titlebar { padding-inline: 22px; } }
-@media (max-width: 700px) { .window-controls { width: 68px; padding-left: 12px; gap: 6px; } .control { width: 10px; height: 10px; } .page-titlebar { padding-inline: 18px; } }
+@media (max-width: 700px) { .window-controls { padding-left: 12px; gap: 6px; } .control { width: 10px; height: 10px; } .page-titlebar { padding-inline: 18px; } }
 </style>
