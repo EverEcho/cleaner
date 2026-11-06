@@ -2,9 +2,14 @@
 import { isTauri } from '@tauri-apps/api/core';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { ElMessage } from 'element-plus';
-import { LockKeyhole } from 'lucide-vue-next';
+import { useRoute } from 'vue-router';
 
 const native = isTauri();
+const route = useRoute();
+function titlebarAction(event: MouseEvent, action: 'drag' | 'maximize') {
+  if ((event.target as HTMLElement).closest('button, a, input, .header-actions, .window-controls')) return;
+  void windowAction(action);
+}
 async function windowAction(action: 'close' | 'minimize' | 'maximize' | 'drag') {
   if (!native) return;
   try {
@@ -18,22 +23,22 @@ async function windowAction(action: 'close' | 'minimize' | 'maximize' | 'drag') 
 </script>
 
 <template>
-  <div class="window-bar" @mousedown.self.left="windowAction('drag')" @dblclick.self="windowAction('maximize')">
+  <div class="window-bar" @mousedown.left="titlebarAction($event, 'drag')" @dblclick="titlebarAction($event, 'maximize')">
     <div class="window-controls">
       <button class="control close" aria-label="关闭窗口" :disabled="!native" @click="windowAction('close')"><span>×</span></button>
       <button class="control minimize" aria-label="最小化窗口" :disabled="!native" @click="windowAction('minimize')"><span>−</span></button>
       <button class="control maximize" aria-label="切换最大化" :disabled="!native" @click="windowAction('maximize')"><span>+</span></button>
     </div>
-    <span class="window-title" aria-hidden="true">AppClear <span>/</span> YOUR SPACE, REIMAGINED</span>
-    <span class="window-privacy"><LockKeyhole :size="10" aria-hidden="true" />{{ native ? '本机管理' : '界面预览' }}</span>
+    <div id="page-titlebar" class="page-titlebar"><span v-if="route.path === '/'" class="window-title">AppClear <span>/</span> 空间概览</span></div>
   </div>
 </template>
 
 <style scoped>
-.window-bar { height: 40px; flex-shrink: 0; display: flex; align-items: center; position: relative; border-bottom: 1px solid var(--accent-border); background: var(--surface); }
+.window-bar { min-height: 56px; flex-shrink: 0; display: flex; align-items: center; position: relative; border-bottom: 1px solid var(--line); background: var(--surface); }
 .window-controls { display: flex; gap: 8px; padding: 12px 21px; width: 208px; flex-shrink: 0; pointer-events: none; }
 .window-controls button { pointer-events: auto; }
-.window-title { color: var(--text-faint); font-size: 9px; letter-spacing: 1.2px; pointer-events: none; padding-left: 29px; }
+.page-titlebar { flex: 1; min-width: 0; padding: 8px 28px; }
+.window-title { color: var(--text-faint); font-size: 12px; pointer-events: none; }
 .window-title span { color: var(--text-faint); padding: 0 8px; }
 .window-privacy { margin-left: auto; padding: 0 24px; color: var(--text-faint); font-size: 10px; display: flex; align-items: center; gap: 6px; pointer-events: none; }
 .control { border: 0; padding: 0; width: 12px; height: 12px; border-radius: 50%; display: grid; place-items: center; cursor: pointer; }
@@ -41,6 +46,6 @@ async function windowAction(action: 'close' | 'minimize' | 'maximize' | 'drag') 
 .control span { opacity: 0; font-size: 11px; color: #634b30; line-height: 12px; }
 .window-controls:hover span, .control:focus-visible span { opacity: 1; }
 .control:disabled { cursor: default; }
-@media (max-width: 960px) { .window-controls { width: 184px; } .window-title { padding-left: 23px; } }
-@media (max-width: 700px) { .window-controls { width: 68px; padding-left: 12px; gap: 6px; } .control { width: 10px; height: 10px; } .window-title { padding-left: 18px; font-size: 8px; } .window-privacy { display: none; } }
+@media (max-width: 960px) { .window-controls { width: 184px; } .page-titlebar { padding-inline: 22px; } }
+@media (max-width: 700px) { .window-controls { width: 68px; padding-left: 12px; gap: 6px; } .control { width: 10px; height: 10px; } .page-titlebar { padding-inline: 18px; } .window-privacy { display: none; } }
 </style>
