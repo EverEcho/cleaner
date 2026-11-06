@@ -2,7 +2,7 @@
 import { computed, onMounted, ref } from 'vue';
 import { invoke, isTauri } from '@tauri-apps/api/core';
 import { ElMessage } from 'element-plus';
-import { Eye, EyeOff, Info, LayoutGrid, Monitor, RefreshCw, Search } from 'lucide-vue-next';
+import { Info, LayoutGrid, Monitor, RefreshCw, Search } from 'lucide-vue-next';
 import { platformInfo, loadPlatform } from '../platform';
 import PageHeader from '../layout/PageHeader.vue';
 
@@ -58,19 +58,16 @@ onMounted(() => { void loadDesktopEntries(); });
     <div class="tool-content">
       <div v-if="!desktopConnected" class="empty-state"><span class="empty-icon"><Monitor :size="30" /></span><h2>为桌面留一点秩序</h2><p>请在桌面应用中打开，查看本机的应用入口和菜单可见性。</p><span class="state-label">浏览器预览 · 尚未连接桌面端</span></div>
       <template v-else>
-        <div class="summary-grid">
-          <div class="summary-card featured"><LayoutGrid :size="20" /><span>应用入口</span><strong>{{ loaded ? desktopEntries.length : '—' }}<small>项</small></strong></div>
-          <div class="summary-card"><Eye :size="20" /><span>菜单中显示</span><strong>{{ loaded ? visibleCount : '—' }}<small>项</small></strong></div>
-          <div class="summary-card"><EyeOff :size="20" /><span>已隐藏</span><strong>{{ loaded ? desktopEntries.length - visibleCount : '—' }}<small>项</small></strong></div>
-        </div>
+        <div class="result-summary"><strong>{{ loaded ? desktopEntries.length : '—' }} <small>个应用入口</small></strong><span>{{ visibleCount }} 个显示 · {{ desktopEntries.length - visibleCount }} 个隐藏</span></div>
         <el-alert v-if="error" title="应用入口读取未完成" :description="error" type="error" :closable="false" show-icon />
         <div v-if="platformInfo && !platformInfo.desktop_visibility" class="platform-note"><Info :size="15" /><span>此系统的应用入口仅供查看，可见性由系统管理。</span></div>
-        <div class="result-heading"><div><h2>应用菜单</h2><p>{{ platformInfo?.desktop_visibility ? '通过开关调整菜单显示，应用本身会保留。' : '查看应用名称、启动命令和入口信息。' }}</p></div><el-input v-model="entrySearch" placeholder="搜索名称或文件名" clearable class="search-input"><template #prefix><Search :size="14" /></template></el-input></div>
+        <div class="result-heading"><p class="table-hint">{{ platformInfo?.desktop_visibility ? '通过开关调整菜单显示' : '应用入口仅供查看' }}</p><el-input v-model="entrySearch" placeholder="搜索名称或文件名" clearable class="search-input"><template #prefix><Search :size="14" /></template></el-input></div>
         <div v-loading="scanning" class="table-panel">
           <el-table :data="filteredEntries" :empty-text="scanning ? '正在读取应用入口…' : loaded ? (entrySearch ? '没有匹配的应用入口' : '未发现应用入口') : '尚未读取应用入口'">
+            <el-table-column type="expand" width="40"><template #default="{ row }"><div class="row-details"><span>启动命令</span><code>{{ row.exec }}</code></div></template></el-table-column>
             <el-table-column label="应用" min-width="190"><template #default="{ row }"><div class="app-cell"><span class="app-icon"><LayoutGrid :size="16" /></span><div><strong>{{ row.name }}</strong><span :title="row.basename">{{ row.basename }}</span></div></div></template></el-table-column>
             <el-table-column label="范围" width="88"><template #default="{ row }"><span class="scope-tag">{{ row.scope }}</span></template></el-table-column>
-            <el-table-column prop="exec" label="启动命令" min-width="170" show-overflow-tooltip />
+
             <el-table-column label="菜单显示" width="96" align="center"><template #default="{ row }"><el-switch v-model="row.visible" :disabled="scanning || toggling || !platformInfo?.desktop_visibility" style="--el-switch-on-color: var(--cyan-strong); --el-switch-off-color: var(--switch-off)" :aria-label="`${row.name}在菜单中显示`" @change="handleToggleEntry(row)" /></template></el-table-column>
           </el-table>
         </div>

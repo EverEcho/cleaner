@@ -1,13 +1,14 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
 import { invoke, isTauri } from '@tauri-apps/api/core';
-import { ArrowLeft, ArrowUpRight, Copy, File, Folder, FolderOpen, HardDrive, Monitor, RefreshCw } from 'lucide-vue-next';
+import { ArrowLeft, ChevronDown, File, Folder, FolderOpen, HardDrive, Monitor } from 'lucide-vue-next';
 import PageHeader from '../layout/PageHeader.vue';
+import ScanAction from '../components/ScanAction.vue';
 import ScanningRadar from '../layout/ScanningRadar.vue';
 import { revealItemInDir } from '@tauri-apps/plugin-opener';
 import { ElMessage } from 'element-plus';
 import { useRouter } from 'vue-router';
-import { activeTask, cancelTask, runTask } from '../tasks';
+import { activeTask, runTask } from '../tasks';
 import { preferences, loadPreferences } from '../preferences';
 import { copyPath } from '../cleanup';
 
@@ -25,7 +26,6 @@ const error = ref('');
 const scanning = ref(false);
 const loaded = ref(false);
 const total = computed(() => directories.value.reduce((sum, row) => sum + row.size_bytes, 0));
-const largest = computed(() => directories.value[0]);
 const breadcrumbs = computed(() => { const parts = analyzedRoot.value.split('/').filter(Boolean); return [{ label: '/', path: '/' }, ...parts.map((label, index) => ({ label, path: '/' + parts.slice(0, index + 1).join('/') }))]; });
 const leading = computed(() => directories.value.slice(0, 5));
 const colors = ['var(--accent)', 'var(--cyan)', 'var(--pink)', 'var(--blue)', 'var(--text-muted)'];
@@ -76,22 +76,17 @@ onMounted(async () => {
   <div class="tool-page">
     <PageHeader title="空间透视" subtitle="从目录到文件夹，看清磁盘空间流向。">
       <template #actions>
-        <div class="analysis-actions">
-          <span v-if="scanning" class="scan-hint" role="status">已检查 {{ task?.current || 0 }} 个文件 · 不跨文件系统</span>
-          <el-button v-if="scanning" :disabled="!task || task.state === 'cancelling'" @click="task && cancelTask(task.id)">{{ task?.state === 'cancelling' ? '正在停止…' : '停止分析' }}</el-button>
-          <el-button v-else :disabled="!desktopConnected || !root" @click="analyze()"><RefreshCw :size="14" />重新分析</el-button>
-        </div>
+        <ScanAction :scanning="scanning" :task="task" :disabled="!desktopConnected || !root" :hint="`已检查 ${task?.current || 0} 个文件 · 不跨文件系统`" :label="root === analyzedRoot ? '重新分析' : '分析目录'" stop-label="停止分析" @start="analyze()" />
       </template>
     </PageHeader>
     <div class="tool-content">
       <div class="path-toolbar">
         <button class="back-step" aria-label="返回上次分析的目录" :disabled="!history.length || scanning" @click="goBack"><ArrowLeft :size="17" /></button>
         <Folder :size="17" class="muted-icon" />
-        <el-select v-model="root" filterable allow-create placeholder="选择或输入绝对目录路径" :disabled="scanning || !desktopConnected" class="path-select">
+        <el-select v-model="root" filterable allow-create placeholder="选择或输入绝对目录路径" :disabled="scanning || !desktopConnected" class="path-select" @keyup.enter="analyze()">
           <el-option v-for="path in roots" :key="path" :label="path" :value="path" />
         </el-select>
         <el-button :disabled="!desktopConnected || scanning" title="选择目录" @click="pick"><FolderOpen :size="14" /></el-button>
-        <el-button type="primary" :disabled="!desktopConnected || !root || scanning" @click="analyze()">分析目录<ArrowUpRight :size="14" /></el-button>
       </div>
       <div v-if="!desktopConnected" class="empty-state"><span class="empty-icon"><Monitor :size="30" /></span><h2>连接你的磁盘</h2><p>请在桌面应用中打开空间透视，读取本机的目录占用。</p><span class="state-label">浏览器预览 · 尚未连接桌面端</span></div>
       <div v-else-if="scanning"><ScanningRadar title="正在绘制空间分布" :sub-title="task?.path || root" :tips="[]" /></div>
@@ -109,13 +104,13 @@ onMounted(async () => {
             </div>
           </div>
           <el-alert v-if="warning" :title="warning" type="warning" :closable="false" show-icon />
-          <div class="result-heading"><div><h2>文件与目录明细</h2><p :title="analyzedRoot">{{ analyzedRoot }}</p></div><span v-if="largest">最大项目 · {{ largest.size }}</span></div>
+
           <div class="table-panel">
             <el-table :data="directories" empty-text="当前目录未发现可读取的文件或子目录" @row-click="drillDown">
               <el-table-column label="目录" min-width="190" show-overflow-tooltip><template #default="{ row }"><div class="folder-cell"><Folder v-if="row.is_dir" :size="18" /><File v-else :size="18" /><span>{{ folderName(row.path) }}</span></div></template></el-table-column>
               <el-table-column label="占比" min-width="160"><template #default="{ row }"><el-progress :percentage="total ? Math.round(row.size_bytes / total * 100) : 0" :stroke-width="5" color="var(--accent)" /></template></el-table-column>
               <el-table-column prop="size" label="占用空间" width="120" align="right" />
-              <el-table-column width="100" align="center"><template #default="{ row }"><el-button text title="查看位置" @click.stop="reveal(row.path)"><FolderOpen :size="14" /></el-button><el-button text title="复制路径" @click.stop="copy(row.path)"><Copy :size="14" /></el-button></template></el-table-column>
+              <el-table-column width="85" align="center"><template #default="{ row }"><el-dropdown trigger="click" @click.stop><el-button text aria-label="目录或文件操作" @click.stop>更多<ChevronDown :size="13" /></el-button><template #dropdown><el-dropdown-menu><el-dropdown-item @click="reveal(row.path)">查看位置</el-dropdown-item><el-dropdown-item @click="copy(row.path)">复制路径</el-dropdown-item></el-dropdown-menu></template></el-dropdown></template></el-table-column>
             </el-table>
           </div>
           <p class="footnote">点击目录继续分析，点击文件查看位置。占比基于已读取的逻辑大小，不等于实际可回收空间；符号链接及其他文件系统会跳过。</p>
@@ -130,18 +125,15 @@ onMounted(async () => {
 .breadcrumbs { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; margin-bottom: 15px; } .breadcrumbs > button { background: var(--surface); border: 1px solid var(--line); color: var(--text-secondary); padding: 5px 9px; border-radius: 7px; font-size: 11px; cursor: pointer; }
 .tool-page { height: 100%; display: flex; flex-direction: column; min-width: 0; background: transparent; }
 .tool-content { flex: 1; min-height: 0; overflow: auto; padding: 8px 28px 24px; }
-.analysis-actions { display: flex; align-items: center; justify-content: flex-end; gap: 12px; }
-.scan-hint { color: var(--text-faint); font-size: 11px; line-height: 1.8; }
-.analysis-actions > .el-button { flex-shrink: 0; }
 .path-toolbar { display: flex; gap: 10px; align-items: center; margin-bottom: 22px; }
 .path-select { flex: 1; min-width: 120px; }
 .back-step { width: 34px; height: 34px; display: grid; place-items: center; background: var(--surface); color: var(--text-secondary); border: 1px solid var(--line); border-radius: 10px; cursor: pointer; }
 .back-step:disabled { opacity: .35; cursor: default; }
 .muted-icon { color: var(--text-muted); flex-shrink: 0; }
-.space-overview { display: flex; align-items: center; gap: 30px; padding: 25px; background: radial-gradient(ellipse at 0 0, rgba(var(--accent-rgb), 0.09), transparent 70%), rgba(var(--neutral-rgb), 0.02); border: 1px solid var(--line); border-radius: 20px; margin-bottom: 20px; }
+.space-overview { display: flex; align-items: center; gap: 24px; padding: 18px; background: radial-gradient(ellipse at 0 0, rgba(var(--accent-rgb), 0.09), transparent 70%), rgba(var(--neutral-rgb), 0.02); border: 1px solid var(--line); border-radius: 20px; margin-bottom: 20px; }
 .space-total { display: flex; flex-direction: column; gap: 9px; min-width: 145px; }
 .eyebrow { font-size: 11px; color: var(--text-secondary); }
-.space-total strong { font-size: 32px; color: var(--text); letter-spacing: -1.2px; font-weight: 600; }
+.space-total strong { font-size: 28px; color: var(--text); letter-spacing: -1.2px; font-weight: 600; }
 .space-total > span:last-child { font-size: 11px; color: var(--text-muted); }
 .space-total small { color: var(--warning); }
 .space-chart { flex: 1; min-width: 0; }

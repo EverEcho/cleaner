@@ -2,7 +2,7 @@
 import { computed } from 'vue';
 import { isTauri } from '@tauri-apps/api/core';
 import { useRouter } from 'vue-router';
-import { ArrowUpRight, FolderSearch, HardDrive, PackageMinus, ScanLine, Sparkles, Trash2 } from 'lucide-vue-next';
+import { ArrowUpRight, FolderSearch, HardDrive, PackageMinus, ScanLine, Trash2 } from 'lucide-vue-next';
 import AuroraCore from '../layout/AuroraCore.vue';
 import { platformInfo } from '../platform';
 import { taskResults,taskLabels } from '../tasks';
@@ -18,9 +18,9 @@ const systemLabel = computed(() => {
 
 const features = [
   { title: '垃圾清理', subtitle: '整理缓存与历史日志', icon: Trash2, path: '/clean', tone: 'violet' },
-  { title: '大文件探索', subtitle: '找到占用空间的大文件', icon: FolderSearch, path: '/large-files', tone: 'cyan' },
+  { title: '大文件', subtitle: '找到占用空间的大文件', icon: FolderSearch, path: '/large-files', tone: 'cyan' },
   { title: '应用管理', subtitle: '卸载应用，整理残留', icon: PackageMinus, path: '/apps', tone: 'pink' },
-  { title: '空间分析', subtitle: '看清每个目录的占用', icon: HardDrive, path: '/storage', tone: 'blue' },
+  { title: '空间透视', subtitle: '看清每个目录的占用', icon: HardDrive, path: '/storage', tone: 'blue' },
 ];
 
 function startScan() {
@@ -37,12 +37,11 @@ function startScan() {
 
     <section class="hero" aria-labelledby="dashboard-title">
       <div class="hero-copy">
-        <div class="hero-eyebrow"><Sparkles :size="14" :stroke-width="1.6" /> A LITTLE SPACE. A NEW START.</div>
         <h1 id="dashboard-title">让空间，<br /><span>重新自由。</span></h1>
         <p class="hero-description">清理日积月累的冗余，<br />让每一次打开，都轻盈一点。</p>
         <button class="primary-scan" @click="startScan">
           <ScanLine :size="20" :stroke-width="1.8" />
-          <span>开始扫描</span>
+          <span>扫描垃圾</span>
           <ArrowUpRight :size="18" :stroke-width="1.8" />
         </button>
         <p class="scan-footnote">先扫描，再由你决定清理哪些内容</p>
@@ -55,10 +54,9 @@ function startScan() {
     </section>
 
     <section class="tools-section" aria-labelledby="tools-title">
-      <div v-if="recentResults.length" class="recent-results"><div v-for="[kind,result] in recentResults" :key="kind"><span>{{ taskLabels[kind] }}</span><strong>{{ result.summary }}</strong><small>{{ new Date(result.at).toLocaleTimeString() }} · 本次会话</small></div></div>
+      <details v-if="recentResults.length" class="interaction-details"><summary>最近扫描</summary><div class="recent-results"><div v-for="[kind,result] in recentResults" :key="kind"><span>{{ taskLabels[kind] }}</span><strong>{{ result.summary }}</strong><small>{{ new Date(result.at).toLocaleTimeString() }} · 本次会话</small></div></div></details>
       <div class="section-heading">
-        <h2 id="tools-title">你的空间，由你掌控</h2>
-        <span>从这里开始</span>
+        <h2 id="tools-title">常用工具</h2>
       </div>
       <div class="features-grid">
         <button v-for="feature in features" :key="feature.path" class="feature" :class="feature.tone" @click="router.push(feature.path)">

@@ -4,10 +4,11 @@ import { isTauri } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import { openUrl } from '@tauri-apps/plugin-opener';
-import { Search, RotateCw, Download, Monitor, ArrowUpRight, Layers, Boxes, CircleCheck, TriangleAlert, ExternalLink, Square, ListOrdered } from 'lucide-vue-next';
+import { ChevronDown, Search, Monitor, CircleCheck, TriangleAlert, ExternalLink, ListOrdered } from 'lucide-vue-next';
 import PageHeader from '../layout/PageHeader.vue';
+import ScanAction from '../components/ScanAction.vue';
 import ScanningRadar from '../layout/ScanningRadar.vue';
-import { runTask, activeTask, cancelTask } from '../tasks';
+import { runTask, activeTask } from '../tasks';
 
 interface UpgradablePkg { name: string; manager: string; current_version: string; new_version: string; arch: string; repository: string }
 interface ToolUpdate { id: string; name: string; provider: string; current_version: string; latest_version: string; status: string; install_path: string; source_url: string; update_hint: string; note: string }
@@ -67,7 +68,7 @@ async function checkUpdates() {
   } catch (error) { errorMessage.value = String(error); log('检测未完成：'+error); ElMessage.error(errorMessage.value); }
   finally { checking.value = false; }
 }
-async function stopCheck() { const task = checkTask.value; if (task) try { await cancelTask(task.id); } catch (error) { ElMessage.error('停止失败: '+error); } }
+
 async function refreshSources() {
   if (busy.value) return;
   refreshing.value = true; log('请求管理员授权并刷新软件源索引…');
@@ -121,39 +122,35 @@ onDeactivated(() => { pageActive = false; if (cancelMessageBox) { ElMessageBox.c
   <div class="subpage-container">
     <PageHeader title="软件更新" subtitle="每个安装实例独立检测，按原渠道有序更新。">
       <template #actions>
-        <el-button :loading="refreshing" :disabled="!desktopAvailable || checking || queueRunning" @click="refreshSources"><RotateCw :size="15" />刷新软件源</el-button>
-        <el-button type="primary" :loading="checking" :disabled="!desktopAvailable || refreshing || queueRunning" @click="checkUpdates"><Download :size="15" />检查更新</el-button>
+        <el-dropdown trigger="click" :disabled="!desktopAvailable || busy"><el-button text :disabled="!desktopAvailable || busy">更多<ChevronDown :size="14" /></el-button><template #dropdown><el-dropdown-menu><el-dropdown-item @click="refreshSources">刷新软件源</el-dropdown-item></el-dropdown-menu></template></el-dropdown>
+        <ScanAction :scanning="checking" :task="checkTask" :disabled="!desktopAvailable || refreshing || queueRunning" hint="检测中，可切换页面" label="检查更新" stop-label="停止检测" @start="checkUpdates" />
       </template>
     </PageHeader>
     <div class="subpage-content">
       <div v-if="!desktopAvailable" class="desktop-notice"><Monitor :size="38" /><h2>让你的软件保持常新</h2><p>请在 AppClear 桌面应用中检测本机软件更新。</p><span>浏览器预览不会访问安装渠道</span></div>
       <template v-else>
-        <section class="updates-summary">
-          <div class="summary-main"><span class="summary-icon"><ArrowUpRight :size="23" /></span><div><strong>{{ availableCount }} <small>项可用更新</small></strong><p>最近检测 {{ timeLabel(checkedAt) }}</p></div></div>
-          <div class="summary-stat"><Boxes :size="17" /><strong>{{ tools.length }}</strong><span>工具安装实例</span></div>
-          <div class="summary-stat"><Layers :size="17" /><strong>{{ completedChannels }}</strong><span>完成检测的渠道</span></div>
-        </section>
-        <div v-if="checking || refreshing" class="update-scan-state"><ScanningRadar :title="refreshing ? '正在刷新软件源…' : '正在检查各个安装渠道…'" :sub-title="checkTask?.phase || currentLog" :tips="['同名软件按安装位置分别核对…','私有来源和固定版本保留原渠道建议…','停止后保留已完成渠道结果…']" /><el-button v-if="checking" :disabled="!checkTask || checkTask.state === 'cancelling'" @click="stopCheck"><Square :size="13" />{{ checkTask?.state === 'cancelling' ? '等待当前查询结束…' : '停止检测' }}</el-button></div>
+        <div class="result-summary"><strong>{{ checkedAt ? availableCount : '—' }} <small>项可用更新</small></strong><span>{{ checkedAt ? `最近检测 ${timeLabel(checkedAt)}` : '尚未完成检测' }} · {{ completedChannels }} 个渠道完成</span></div>
+        <div v-if="checking || refreshing" class="update-scan-state"><ScanningRadar :title="refreshing ? '正在刷新软件源…' : '正在检查各个安装渠道…'" :sub-title="checkTask?.phase || currentLog" /></div>
         <el-alert v-if="errorMessage" :title="errorMessage" type="error" :closable="false" />
-        <details v-if="channels.length" class="channel-panel"><summary>安装渠道覆盖 · {{ completedChannels }} 个完成 / {{ channels.length }} 个候选渠道</summary><div class="channel-grid"><article v-for="channel in channels" :key="channel.id" class="channel-card"><div><b>{{ providerLabels[channel.provider] ?? channel.provider.toUpperCase() }}</b><span :class="channel.state">{{ channelLabels[channel.state] ?? channel.state }}</span></div><p>{{ channel.message }}</p><small>{{ timeLabel(channel.checked_at) }}<template v-if="channel.cache_seconds"> · 上游缓存最多 {{ channel.cache_seconds / 60 }} 分钟</template></small><code v-if="channel.source_path">{{ channel.source_path }}</code></article></div></details>
-        <details v-if="warnings.length" class="update-warnings"><summary>{{ warnings.length }} 条检测提示</summary><p v-for="warning in warnings" :key="warning">{{ warning }}</p></details>
+        <details v-if="channels.length || warnings.length" class="channel-panel"><summary>检测范围 · {{ completedChannels }} / {{ channels.length }} 个渠道完成<span v-if="channels.some(channel => ['failed','unsupported','cancelled'].includes(channel.state))"> · 有未完成渠道</span><span v-if="warnings.length"> · {{ warnings.length }} 条提示</span></summary><el-button text :disabled="busy" @click="refreshSources">刷新软件源并重查</el-button><p v-for="warning in warnings" :key="warning" class="coverage-hint">{{ warning }}</p><div class="channel-grid"><article v-for="channel in channels" :key="channel.id" class="channel-card"><div><b>{{ providerLabels[channel.provider] ?? channel.provider.toUpperCase() }}</b><span :class="channel.state">{{ channelLabels[channel.state] ?? channel.state }}</span></div><p>{{ channel.message }}</p><small>{{ timeLabel(channel.checked_at) }}<template v-if="channel.cache_seconds"> · 上游缓存最多 {{ channel.cache_seconds / 60 }} 分钟</template></small><code v-if="channel.source_path">{{ channel.source_path }}</code></article></div></details>
+
         <section v-if="queue.length" class="queue-panel"><div class="queue-heading"><h3><ListOrdered :size="16" />更新队列</h3><el-button v-if="queueRunning" :disabled="stopRequested" size="small" @click="stopRequested = true">{{ stopRequested ? '当前项目结束后停止' : '停止后续' }}</el-button><el-button v-else-if="failedQueue.length" :disabled="checking || refreshing" size="small" @click="runQueue(failedQueue)">仅重试失败项（{{ failedQueue.length }}）</el-button></div><article v-for="item in queue" :key="item.id" class="queue-row"><span :class="item.state">{{ queueLabels[item.state] }}</span><strong>{{ item.name }}</strong><small>{{ providerLabels[item.provider] ?? item.provider }}<template v-if="item.package?.arch"> · {{ item.package.arch }}</template> → {{ item.target }}</small><p v-if="item.message">{{ item.message }}</p></article></section>
-        <details v-if="logs.length" class="execution-logs" :open="queueRunning || refreshing"><summary>{{ queueRunning ? '正在执行' : '任务日志' }} · {{ currentLog }}</summary><pre>{{ logs.join('\n') }}</pre></details>
-        <div class="updates-toolbar"><el-input v-model="search" placeholder="搜索软件、来源或安装路径" clearable class="update-search"><template #prefix><Search :size="15" /></template></el-input><el-select v-model="filterManager" class="manager-filter"><el-option label="所有安装渠道" value="all" /><el-option v-for="manager in availableManagers" :key="manager" :label="providerLabels[manager] ?? manager.toUpperCase()" :value="manager" /></el-select><el-button type="primary" :disabled="busy || !selectedCount" @click="upgradeSelected">更新选中（{{ selectedCount }}）</el-button></div>
+
+        <div class="updates-toolbar"><el-input v-model="search" placeholder="搜索软件、来源或安装路径" clearable class="update-search"><template #prefix><Search :size="15" /></template></el-input><el-select v-model="filterManager" class="manager-filter"><el-option label="所有安装渠道" value="all" /><el-option v-for="manager in availableManagers" :key="manager" :label="providerLabels[manager] ?? manager.toUpperCase()" :value="manager" /></el-select></div>
         <div class="section-heading"><h3>系统软件包</h3><span>{{ updates.length }} 项候选更新</span></div>
-        <p class="update-note">候选版本来自当前软件源索引。APT / DNF4 更新锁定确认版本，Flatpak 锁定范围与提交；其他渠道保留原渠道建议。未知或未完成渠道不计作无更新。</p>
+        <p class="update-note">未完成检测的渠道不代表没有更新；无法直接更新的项目提供原渠道建议。</p>
         <div class="data-table"><el-table :data="filteredUpdates" :row-key="packageKey" empty-text="此范围内没有系统更新候选项" @selection-change="(rows: UpgradablePkg[]) => selectedPackages = rows">
-          <el-table-column type="selection" width="44" :selectable="(row: UpgradablePkg) => canUpgradePackage(row) && !busy" />
-          <el-table-column prop="name" label="软件包" min-width="150" show-overflow-tooltip />
+          <el-table-column type="selection" width="44" :selectable="(row: UpgradablePkg) => canUpgradePackage(row) && !busy" /><el-table-column type="expand" width="40"><template #default="{row}"><div class="row-details"><span>架构：{{ row.arch || '未知' }} · 来源 / 分支：{{ row.repository || '未知' }}</span></div></template></el-table-column>
+          <el-table-column label="软件包" min-width="150"><template #default="{row}"><span>{{ row.name }}</span><small v-if="row.arch" class="package-arch">{{ row.arch }}</small></template></el-table-column>
           <el-table-column label="渠道" width="105"><template #default="{row}"><el-tag size="small">{{ row.manager.toUpperCase() }}</el-tag></template></el-table-column>
-          <el-table-column prop="arch" label="架构" width="95" show-overflow-tooltip><template #default="{row}">{{ row.arch || '—' }}</template></el-table-column>
-          <el-table-column prop="current_version" label="当前版本 / 提交" min-width="115" show-overflow-tooltip><template #default="{row}"><span class="old-ver">{{ row.current_version || '已安装' }}</span></template></el-table-column>
-          <el-table-column prop="new_version" label="候选版本 / 提交" min-width="115" show-overflow-tooltip><template #default="{row}"><span class="new-ver">{{ row.new_version }}</span></template></el-table-column>
-          <el-table-column prop="repository" label="来源 / 分支" min-width="110" show-overflow-tooltip />
+
+          <el-table-column prop="current_version" label="当前版本" min-width="115" show-overflow-tooltip><template #default="{row}"><span class="old-ver">{{ row.current_version || '已安装' }}</span></template></el-table-column>
+          <el-table-column prop="new_version" label="可用版本" min-width="115" show-overflow-tooltip><template #default="{row}"><span class="new-ver">{{ row.new_version }}</span></template></el-table-column>
+
           <el-table-column label="操作" width="105"><template #default="{row}"><el-button v-if="canUpgradePackage(row)" size="small" :disabled="busy" @click="runQueue([packageQueue(row)])">更新此项</el-button><el-button v-else size="small" @click="nativeHint(row)">原渠道建议</el-button></template></el-table-column>
         </el-table></div>
         <div class="tool-heading"><div class="section-heading"><h3>工具与独立软件</h3><span>{{ tools.length }} 个安装实例</span></div><el-checkbox v-model="onlyAvailable">只看有更新</el-checkbox></div>
-        <p class="update-note">直接升级仅用于已确认来源和版本约束的 npm / uv / pipx 实例；检测许可有效 10 分钟。其余实例保留原安装渠道建议。</p>
+
         <div class="data-table"><el-table :data="filteredTools" row-key="id" empty-text="此范围内没有工具安装实例" @selection-change="(rows: ToolUpdate[]) => selectedTools = rows">
           <el-table-column type="selection" width="44" :selectable="(row: ToolUpdate) => canUpgradeTool(row) && !busy" />
           <el-table-column type="expand"><template #default="{row}"><div class="tool-details"><p><b>安装实例：</b>{{ row.install_path || '安装位置未可靠确认' }}</p><p>{{ row.note }}</p><p><b>原渠道建议：</b><code>{{ row.update_hint }}</code></p><el-button size="small" @click="copyHint(row)">复制更新方式</el-button><el-button v-if="row.source_url" size="small" @click="showSource(row)"><ExternalLink :size="13" />查看官方来源</el-button></div></template></el-table-column>
@@ -164,13 +161,17 @@ onDeactivated(() => { pageActive = false; if (cancelMessageBox) { ElMessageBox.c
           <el-table-column label="状态" min-width="115"><template #default="{row}"><el-tag :type="toolStatuses[row.status]?.type ?? 'info'" size="small">{{ toolStatuses[row.status]?.label ?? '需核对' }}</el-tag></template></el-table-column>
           <el-table-column label="操作" width="110"><template #default="{row}"><el-button v-if="canUpgradeTool(row)" size="small" :disabled="busy" @click="runQueue([toolQueue(row)])">更新此项</el-button><el-button v-else size="small" @click="copyHint(row)">复制建议</el-button></template></el-table-column>
         </el-table></div>
+        <details v-if="logs.length" class="execution-logs"><summary>{{ queueRunning ? '正在执行' : '任务日志' }} · {{ currentLog }}</summary><pre>{{ logs.join('\n') }}</pre></details>
         <div v-if="checkedAt && !checking && !availableCount && completedChannels" class="empty-status"><span class="empty-symbol"><CircleCheck :size="34" /></span><div class="empty-title">已完成检测的渠道未发现更新</div><div class="empty-sub">{{ completedChannels }} 个渠道完成检测；其余渠道的状态见上方覆盖信息。</div></div>
         <div v-if="checkedAt && !completedChannels && !checking" class="empty-status"><span class="empty-symbol is-error"><TriangleAlert :size="34" /></span><div class="empty-title">尚无渠道完成检测</div><div class="empty-sub">检查上方每个渠道的原因后重试。</div></div>
       </template>
     </div>
+    <div v-if="selectedCount" class="update-selection-bar"><span>已选择 {{ selectedCount }} 项更新</span><el-button type="primary" :disabled="busy" @click="upgradeSelected">更新所选</el-button></div>
   </div>
 </template>
 <style scoped>
+.package-arch { display: block; color: var(--text-muted); font-size: 10px; }
+.coverage-hint { color: var(--warning); font-size: 11px; line-height: 1.7; }
 :deep(.el-button svg.lucide) { margin-right: 6px; flex-shrink: 0; }
 .subpage-container { display: flex; flex-direction: column; height: 100%; min-width: 0; background: transparent; color: var(--text); }
 .subpage-content { flex: 1; min-height: 0; padding: 16px 28px 28px; overflow: auto; }

@@ -2,7 +2,7 @@
 import { computed, onMounted, ref } from 'vue';
 import { invoke, isTauri } from '@tauri-apps/api/core';
 import { ElMessage } from 'element-plus';
-import { Info, Monitor, Power, RefreshCw, Rocket, Search, ShieldCheck } from 'lucide-vue-next';
+import { Info, Monitor, Power, RefreshCw, Search } from 'lucide-vue-next';
 import { platformInfo, loadPlatform } from '../platform';
 import PageHeader from '../layout/PageHeader.vue';
 
@@ -50,24 +50,21 @@ onMounted(() => { void loadAutostart(); });
 
 <template>
   <div class="tool-page">
-    <PageHeader title="启动管理" subtitle="让需要的应用随你启动，其他的留待稍后。">
+    <PageHeader title="启动项" subtitle="让需要的应用随你启动，其他的留待稍后。">
       <template #actions><el-button :loading="scanning" :disabled="!desktopConnected || toggling" @click="loadAutostart"><RefreshCw :size="14" />刷新列表</el-button></template>
     </PageHeader>
     <div class="tool-content">
       <div v-if="!desktopConnected" class="empty-state"><span class="empty-icon"><Monitor :size="30" /></span><h2>让开机更从容</h2><p>请在桌面应用中打开，查看并管理本机的登录启动项。</p><span class="state-label">浏览器预览 · 尚未连接桌面端</span></div>
       <template v-else>
-        <div class="summary-grid">
-          <div class="summary-card featured"><Rocket :size="20" /><span>已启用</span><strong>{{ loaded ? enabledCount : '—' }}<small>项</small></strong></div>
-          <div class="summary-card"><Power :size="20" /><span>已禁用</span><strong>{{ loaded ? autostartList.length - enabledCount : '—' }}<small>项</small></strong></div>
-          <div class="summary-card"><ShieldCheck :size="20" /><span>启动项总数</span><strong>{{ loaded ? autostartList.length : '—' }}<small>项</small></strong></div>
-        </div>
+        <div class="result-summary"><strong>{{ loaded ? enabledCount : '—' }} <small>项已启用</small></strong><span>共 {{ loaded ? autostartList.length : '—' }} 个启动项</span></div>
         <el-alert v-if="error" title="启动项读取未完成" :description="error" type="error" :closable="false" show-icon />
         <div v-if="platformInfo?.autostart_note" class="platform-note"><Info :size="15" /><span>{{ platformInfo.autostart_note }}</span></div>
-        <div class="result-heading"><div><h2>登录时启动的应用</h2><p>关闭开关后，该应用将不再随登录自动启动。</p></div><el-input v-model="search" placeholder="搜索启动项" clearable class="search-input"><template #prefix><Search :size="14" /></template></el-input></div>
+        <div class="result-heading"><p class="table-hint">通过开关调整登录启动状态</p><el-input v-model="search" placeholder="搜索启动项" clearable class="search-input"><template #prefix><Search :size="14" /></template></el-input></div>
         <div v-loading="scanning" class="table-panel">
           <el-table :data="filtered" :empty-text="scanning ? '正在读取启动项…' : loaded ? (search ? '没有匹配的启动项' : '未发现登录启动项') : '尚未读取启动项'">
+            <el-table-column type="expand" width="40"><template #default="{ row }"><div class="row-details"><span>启动命令</span><code>{{ row.exec }}</code></div></template></el-table-column>
             <el-table-column label="应用" min-width="185"><template #default="{ row }"><div class="app-cell"><span class="app-icon"><Power :size="16" /></span><div><strong>{{ row.name }}</strong><span v-if="row.comment" :title="row.comment">{{ row.comment }}</span></div></div></template></el-table-column>
-            <el-table-column prop="exec" label="启动命令" min-width="170" show-overflow-tooltip />
+
             <el-table-column label="范围" width="86"><template #default="{ row }"><span class="scope-tag" :class="{ system: !row.is_user }">{{ row.is_user ? '当前用户' : '系统级' }}</span></template></el-table-column>
             <el-table-column label="状态" width="96" align="center"><template #default="{ row }"><el-tooltip :content="platformInfo?.os === 'macos' && !row.is_user ? '系统级启动项由 macOS 管理' : row.enabled ? '点击禁用' : '点击启用'"><el-switch v-model="row.enabled" :disabled="scanning || toggling || (platformInfo?.os === 'macos' && !row.is_user)" style="--el-switch-on-color: var(--accent-strong); --el-switch-off-color: var(--switch-off)" :aria-label="`${row.name}登录启动`" @change="handleToggleAutostart(row)" /></el-tooltip></template></el-table-column>
           </el-table>

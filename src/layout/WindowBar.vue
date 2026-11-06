@@ -40,12 +40,11 @@ async function windowAction(action: 'close' | 'minimize' | 'maximize' | 'drag') 
 .page-titlebar { flex: 1; min-width: 0; padding: 8px 28px; }
 .window-title { color: var(--text-faint); font-size: 12px; pointer-events: none; }
 .window-title span { color: var(--text-faint); padding: 0 8px; }
-.window-privacy { margin-left: auto; padding: 0 24px; color: var(--text-faint); font-size: 10px; display: flex; align-items: center; gap: 6px; pointer-events: none; }
 .control { border: 0; padding: 0; width: 12px; height: 12px; border-radius: 50%; display: grid; place-items: center; cursor: pointer; }
 .close { background: #ff5f57; } .minimize { background: #febc2e; } .maximize { background: #28c840; }
 .control span { opacity: 0; font-size: 11px; color: #634b30; line-height: 12px; }
 .window-controls:hover span, .control:focus-visible span { opacity: 1; }
 .control:disabled { cursor: default; }
 @media (max-width: 960px) { .window-controls { width: 184px; } .page-titlebar { padding-inline: 22px; } }
-@media (max-width: 700px) { .window-controls { width: 68px; padding-left: 12px; gap: 6px; } .control { width: 10px; height: 10px; } .page-titlebar { padding-inline: 18px; } .window-privacy { display: none; } }
+@media (max-width: 700px) { .window-controls { width: 68px; padding-left: 12px; gap: 6px; } .control { width: 10px; height: 10px; } .page-titlebar { padding-inline: 18px; } }
 </style>

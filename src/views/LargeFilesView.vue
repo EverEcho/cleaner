@@ -4,12 +4,13 @@ import { isTauri } from '@tauri-apps/api/core';
 import { useRoute, useRouter } from 'vue-router';
 import { revealItemInDir } from '@tauri-apps/plugin-opener';
 import { ElMessage, ElMessageBox } from 'element-plus';
-import { ArrowDownWideNarrow, Copy, File, HardDrive, Monitor, RefreshCw, Search, Trash2 } from 'lucide-vue-next';
+import { ChevronDown, File, HardDrive, Monitor, Search, Trash2 } from 'lucide-vue-next';
 import PageHeader from '../layout/PageHeader.vue';
+import ScanAction from '../components/ScanAction.vue';
 import ScanningRadar from '../layout/ScanningRadar.vue';
 import ScanScope from '../components/ScanScope.vue';
 import ActionResults from '../components/ActionResults.vue';
-import { activeTask, cancelTask, runTask } from '../tasks';
+import { activeTask, runTask } from '../tasks';
 import { preferences, loadPreferences, savePreferences } from '../preferences';
 import { copyPath, type ActionReport, type FileScanReport } from '../cleanup';
 interface LargeFile { path: string; name: string; size_bytes: number; size_str: string; ext: string }
@@ -61,26 +62,26 @@ onDeactivated(() => { if (cancelConfirmation) { ElMessageBox.close(); cancelConf
 <template>
   <div class="tool-page">
     <PageHeader title="大文件" subtitle="找出占用空间的主角，让每一次清理都有把握。">
-      <template #actions><el-button :loading="scanning" :disabled="!desktopConnected || removing" @click="loadLargeFiles"><RefreshCw :size="14" />重新扫描</el-button></template>
+      <template #actions><ScanAction :scanning="scanning" :task="task" :disabled="!desktopConnected || removing" :hint="`已检查 ${task?.current || 0} 个文件`" @start="loadLargeFiles" /></template>
     </PageHeader>
     <div class="tool-content">
       <el-alert v-if="route.query.root" :title="`本次临时扫描范围：${route.query.root}`" type="info" :closable="false"><el-button text :disabled="scanning || removing" @click="router.replace({ path: '/large-files' })">使用保存的范围</el-button></el-alert>
       <ScanScope :disabled="scanning || removing || !desktopConnected" :min-mb="preferences.large_min_mb" @update:min-mb="savePreferences({ large_min_mb: $event })" />
       <ActionResults :report="result" />
       <div v-if="!desktopConnected" class="empty-state"><span class="empty-icon"><Monitor :size="30" /></span><h2>给磁盘腾点空间</h2><p>请在桌面应用中打开，扫描本机的大文件。</p><span class="state-label">浏览器预览 · 尚未连接桌面端</span></div>
-      <div v-else-if="scanning"><ScanningRadar title="正在寻找空间大户" :sub-title="task?.path || '准备扫描…'" :tips="[]" /><p class="footnote">已检查 {{ task?.current || 0 }} 个文件</p><el-button v-if="task" @click="cancelTask(task.id)">停止扫描，保留已发现结果</el-button></div>
+      <div v-else-if="scanning"><ScanningRadar title="正在寻找空间大户" :sub-title="task?.path || '准备扫描…'" :tips="[]" /></div>
       <template v-else>
         <el-alert v-if="error" title="大文件扫描未完成" :description="error" type="error" :closable="false" show-icon />
         <template v-if="loaded">
           <el-alert v-if="warnings.length" title="部分扫描范围未覆盖" :description="warnings.join('\n')" type="warning" :closable="false" show-icon />
-          <div class="summary-grid"><div class="summary-card featured"><HardDrive :size="20" /><span>文件总占用</span><strong>{{ formatSize(totalSize) }}</strong></div><div class="summary-card"><File :size="20" /><span>发现大文件</span><strong>{{ largeFiles.length }}<small>个</small></strong></div><div class="summary-card"><ArrowDownWideNarrow :size="20" /><span>扫描门槛</span><strong>{{ preferences.large_min_mb }}<small>MB 起</small></strong></div></div>
+          <div class="result-summary"><strong>{{ formatSize(totalSize) }}</strong><span>{{ largeFiles.length }} 个大文件 · {{ preferences.large_min_mb }} MB 起</span></div>
           <div class="result-heading"><div><h2>文件明细</h2><p>按大小排列。选中前请核对名称与所在目录。</p></div><el-input v-model="search" placeholder="搜索文件或路径" clearable :disabled="removing" class="search-input"><template #prefix><Search :size="14" /></template></el-input></div>
           <div v-if="largeFiles.length" class="table-panel">
             <el-table ref="table" :data="filteredFiles" row-key="path" empty-text="没有匹配的文件" @selection-change="selectFiles">
               <el-table-column type="selection" :selectable="canSelectFile" reserve-selection width="44" />
               <el-table-column label="文件" min-width="250"><template #default="{ row }"><div class="file-cell"><span class="file-icon"><File :size="18" /></span><div><strong :title="row.name">{{ row.name }}</strong><span :title="row.path">{{ row.path }}</span></div></div></template></el-table-column>
               <el-table-column prop="size_bytes" label="占用空间" width="130" sortable align="right"><template #default="{ row }"><span class="file-size">{{ row.size_str }}</span></template></el-table-column>
-              <el-table-column label="操作" width="150"><template #default="{ row }"><el-button text title="查看位置" @click="reveal(row.path)"><Search :size="14" /></el-button><el-button text title="复制路径" @click="copy(row.path)"><Copy :size="14" /></el-button><el-button text :disabled="removing" title="加入保留名单" @click="exclude(row.path)">保留</el-button></template></el-table-column>
+              <el-table-column label="操作" width="90" align="center"><template #default="{ row }"><el-dropdown trigger="click"><el-button text aria-label="文件操作">更多<ChevronDown :size="13" /></el-button><template #dropdown><el-dropdown-menu><el-dropdown-item @click="reveal(row.path)">查看位置</el-dropdown-item><el-dropdown-item @click="copy(row.path)">复制路径</el-dropdown-item><el-dropdown-item :disabled="removing" @click="exclude(row.path)">加入保留名单</el-dropdown-item></el-dropdown-menu></template></el-dropdown></template></el-table-column>
               <el-table-column label="格式" width="82" align="center"><template #default="{ row }"><span class="format-tag">{{ row.ext ? row.ext.toUpperCase() : '无扩展名' }}</span></template></el-table-column>
             </el-table>
           </div>
@@ -90,7 +91,7 @@ onDeactivated(() => { if (cancelConfirmation) { ElMessageBox.close(); cancelConf
         <div v-else-if="!error" class="empty-state"><span class="empty-icon"><HardDrive :size="30" /></span><h2>找出空间大户</h2><p>开始扫描，查看常用目录中的大文件。</p></div>
       </template>
     </div>
-    <div v-if="selected.length && !scanning" class="selection-bar"><div><span>已选择 {{ selected.length }} 个文件</span><strong>{{ formatSize(selectedSize) }}</strong></div><div><el-button text @click="selectionDialog = true">查看全部已选</el-button><el-button type="primary" :loading="removing" @click="removeSelected"><Trash2 :size="15" />移入废纸篓</el-button></div></div>
+    <div v-if="selected.length && !scanning" class="selection-bar"><div><span>已选择 {{ selected.length }} 个文件</span><strong>{{ formatSize(selectedSize) }}</strong></div><div><el-button text @click="selectionDialog = true">查看已选</el-button><el-button type="primary" :loading="removing" @click="removeSelected"><Trash2 :size="15" />移入废纸篓</el-button></div></div>
     <el-dialog v-model="selectionDialog" title="全部已选文件" width="70%"><div class="selection-list"><div v-for="file in selected" :key="file.path" class="selected-file"><span>{{ file.path }} · {{ file.size_str }}</span><el-button text @click="reveal(file.path)">查看位置</el-button></div></div></el-dialog>
   </div>
 </template>

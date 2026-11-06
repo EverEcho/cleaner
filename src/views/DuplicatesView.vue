@@ -3,12 +3,13 @@ import { computed, onDeactivated, onMounted, ref } from 'vue';
 import { isTauri } from '@tauri-apps/api/core';
 import { revealItemInDir } from '@tauri-apps/plugin-opener';
 import { ElMessage, ElMessageBox } from 'element-plus';
-import { Copy, File, Files, HardDrive, Monitor, RefreshCw, Search, ShieldCheck, Trash2 } from 'lucide-vue-next';
+import { ChevronDown, Copy, File, Monitor, Search, ShieldCheck, Trash2 } from 'lucide-vue-next';
 import PageHeader from '../layout/PageHeader.vue';
+import ScanAction from '../components/ScanAction.vue';
 import ScanningRadar from '../layout/ScanningRadar.vue';
 import ScanScope from '../components/ScanScope.vue';
 import ActionResults from '../components/ActionResults.vue';
-import { activeTask, cancelTask, runTask } from '../tasks';
+import { activeTask, runTask } from '../tasks';
 import { preferences, loadPreferences } from '../preferences';
 import { copyPath, type ActionReport, type FileScanReport } from '../cleanup';
 interface DuplicateGroup { hash: string; size_bytes: number; size_str: string; files: string[] }
@@ -27,6 +28,10 @@ const filteredGroups = computed(() => duplicateGroups.value.filter(group => grou
 function formatSize(bytes: number) { if (!bytes) return '0 B'; const units = ['B', 'KB', 'MB', 'GB', 'TB']; const index = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1); return `${(bytes / 1024 ** index).toFixed(index ? 1 : 0)} ${units[index]}`; }
 function fileName(path: string) { return path.split('/').pop() || path; }
 function mustKeep(file: string, group: DuplicateGroup) { return retained.value[group.hash] === file || !selectedSet.value.has(file) && group.files.filter(path => !selectedSet.value.has(path)).length <= 1; }
+function selectFile(file: string, group: DuplicateGroup, checked: boolean) {
+  if (removing.value || mustKeep(file, group)) return;
+  selected.value = checked ? [...new Set([...selected.value, file])] : selected.value.filter(path => path !== file);
+}
 function keep(file: string, group: DuplicateGroup) { retained.value = { ...retained.value, [group.hash]: file }; selected.value = selected.value.filter(path => path !== file); }
 function selectOthers(group: DuplicateGroup) { const chosen = retained.value[group.hash] || group.files[0]; if (!chosen) return; keep(chosen, group); selected.value = [...new Set([...selected.value.filter(path => !group.files.includes(path)), ...group.files.filter(file => file !== chosen)])]; }
 async function reveal(path: string) { try { await revealItemInDir(path); } catch (cause) { ElMessage.error(String(cause)); } }
@@ -59,23 +64,23 @@ onDeactivated(() => { if (cancelConfirmation) { ElMessageBox.close(); cancelConf
 <template>
   <div class="tool-page">
     <PageHeader title="重复文件" subtitle="相同的内容，只留下你想保留的那份。">
-      <template #actions><el-button :loading="scanning" :disabled="!desktopConnected || removing" @click="loadDuplicates"><RefreshCw :size="14" />重新比对</el-button></template>
+      <template #actions><ScanAction :scanning="scanning" :task="task" :disabled="!desktopConnected || removing" :hint="`已检查 ${task?.current || 0} 项`" label="重新比对" @start="loadDuplicates" /></template>
     </PageHeader>
     <div class="tool-content">
       <ScanScope :disabled="scanning || removing || !desktopConnected" />
       <ActionResults :report="result" />
       <div v-if="!desktopConnected" class="empty-state"><span class="empty-icon"><Monitor :size="30" /></span><h2>把多余的副本找出来</h2><p>请在桌面应用中打开，通过文件内容比对重复副本。</p><span class="state-label">浏览器预览 · 尚未连接桌面端</span></div>
-      <div v-else-if="scanning"><ScanningRadar title="正在比对文件内容" :sub-title="task?.path || '准备扫描…'" :tips="[]" /><p class="footnote">当前已检查 {{ task?.current || 0 }} 项 · SHA-256 读取可停止</p><el-button v-if="task" @click="cancelTask(task.id)">停止扫描，保留完整比对结果</el-button></div>
+      <div v-else-if="scanning"><ScanningRadar title="正在比对文件内容" :sub-title="task?.path || '准备扫描…'" :tips="[]" /></div>
       <template v-else>
         <el-alert v-if="error" title="重复文件比对未完成" :description="error" type="error" :closable="false" show-icon />
         <template v-if="loaded">
           <el-alert v-if="warnings.length" title="部分扫描范围未覆盖" :description="warnings.join('\n')" type="warning" :closable="false" show-icon />
-          <div class="summary-grid"><div class="summary-card featured"><HardDrive :size="20" /><span>多余副本大小</span><strong>{{ formatSize(extraSize) }}</strong></div><div class="summary-card"><Copy :size="20" /><span>重复组</span><strong>{{ duplicateGroups.length }}<small>组</small></strong></div><div class="summary-card"><Files :size="20" /><span>组内文件</span><strong>{{ fileCount }}<small>份</small></strong></div></div>
+          <div class="result-summary"><strong>{{ formatSize(extraSize) }}</strong><span>多余副本 · {{ duplicateGroups.length }} 组 / {{ fileCount }} 份文件</span></div>
           <div class="result-heading"><div><h2>内容相同的副本</h2><p><ShieldCheck :size="12" />每组至少保留一份，不预选任何文件。</p></div><el-input v-model="search" placeholder="搜索文件或路径" clearable :disabled="removing" class="search-input"><template #prefix><Search :size="14" /></template></el-input></div>
           <div v-for="group in filteredGroups" :key="group.hash" class="duplicate-card">
-            <div class="group-heading"><div class="group-identity"><span class="group-icon"><Copy :size="18" /></span><div><h3 :title="fileName(group.files[0] || '')">{{ fileName(group.files[0] || '') }}</h3><span>{{ group.files.length }} 份内容相同 · 单份 {{ group.size_str }}</span></div></div><div><el-button text :disabled="removing" @click="selectOthers(group)">保留一份，选择其余</el-button><span class="duplicate-size">多余 {{ formatSize(group.size_bytes * (group.files.length - 1)) }}</span></div></div>
-            <div class="copy-list"><div v-for="file in group.files" :key="file" class="copy-row" :class="{ selected: selectedSet.has(file), retained: mustKeep(file, group) }"><el-checkbox v-model="selected" :value="file" :disabled="removing || mustKeep(file, group)"><span class="copy-detail"><File :size="15" /><span><strong>{{ fileName(file) }}</strong><small :title="file">{{ file }}</small></span></span></el-checkbox><div class="file-actions"><el-button text :disabled="removing" @click="keep(file, group)">保留这份</el-button><el-button text title="查看位置" @click="reveal(file)"><Search :size="13" /></el-button><el-button text title="复制路径" @click="copy(file)"><Copy :size="13" /></el-button></div><span v-if="mustKeep(file, group)" class="keep-label"><ShieldCheck :size="11" />保留</span></div></div>
-            <div class="group-footer"><span :title="group.hash">SHA-256 · {{ group.hash.slice(0, 16) }}…</span><span>{{ group.files.filter(file => selectedSet.has(file)).length }} 份已选择</span></div>
+            <div class="group-heading"><div class="group-identity"><span class="group-icon"><Copy :size="18" /></span><div><h3 :title="fileName(group.files[0] || '')">{{ fileName(group.files[0] || '') }}</h3><span>{{ group.files.length }} 份内容相同 · 单份 {{ group.size_str }}</span></div></div><div><el-button text :disabled="removing" @click="selectOthers(group)">选择其余副本</el-button><span class="duplicate-size">多余 {{ formatSize(group.size_bytes * (group.files.length - 1)) }}</span></div></div>
+            <div class="copy-list"><div v-for="file in group.files" :key="file" class="copy-row" :class="{ selected: selectedSet.has(file), retained: mustKeep(file, group) }"><el-checkbox :model-value="selectedSet.has(file)" :disabled="removing || mustKeep(file, group)" @change="selectFile(file, group, Boolean($event))"><span class="copy-detail"><File :size="15" /><span><strong>{{ fileName(file) }}</strong><small :title="file">{{ file }}</small></span></span></el-checkbox><div class="file-actions"><el-button v-if="!mustKeep(file, group)" text :disabled="removing" @click="keep(file, group)">保留这份</el-button><el-dropdown trigger="click"><el-button text :aria-label="`${fileName(file)}的更多操作`">更多<ChevronDown :size="13" /></el-button><template #dropdown><el-dropdown-menu><el-dropdown-item @click="reveal(file)">查看位置</el-dropdown-item><el-dropdown-item @click="copy(file)">复制路径</el-dropdown-item></el-dropdown-menu></template></el-dropdown></div><span v-if="mustKeep(file, group)" class="keep-label"><ShieldCheck :size="11" />保留</span></div></div>
+            <div class="group-footer"><span :title="`SHA-256 · ${group.hash}`">内容已核对</span><span>{{ group.files.filter(file => selectedSet.has(file)).length }} 份已选择</span></div>
           </div>
           <div v-if="!filteredGroups.length" class="empty-state compact"><span class="empty-icon"><Copy :size="28" /></span><h2>{{ search ? '没有匹配的副本' : '文件，各有各的内容' }}</h2><p>{{ search ? '尝试其他名称或路径。' : '本次已读取目录中，未发现内容完全相同的重复文件。' }}</p></div>
           <p class="footnote">覆盖：{{ scannedRoots.join('、') }}。比对大于 64 KB 的文件；容量为逻辑大小，同一文件的硬链接不会产生额外可释放空间。</p>
@@ -83,7 +88,7 @@ onDeactivated(() => { if (cancelConfirmation) { ElMessageBox.close(); cancelConf
         <div v-else-if="!error" class="empty-state"><span class="empty-icon"><Copy :size="30" /></span><h2>发现相同的内容</h2><p>开始比对，找出常用目录中的重复文件。</p></div>
       </template>
     </div>
-    <div v-if="selected.length && !scanning" class="selection-bar"><div><span>已选择 {{ selected.length }} 份副本</span><strong>{{ formatSize(selectedSize) }}</strong></div><div class="selection-actions"><el-button text @click="selectionDialog = true">查看全部已选</el-button><el-button text :disabled="removing" @click="selected = []">取消选择</el-button><el-button type="primary" :loading="removing" @click="removeSelected"><Trash2 :size="15" />移入废纸篓</el-button></div></div>
+    <div v-if="selected.length && !scanning" class="selection-bar"><div><span>已选择 {{ selected.length }} 份副本</span><strong>{{ formatSize(selectedSize) }}</strong></div><div class="selection-actions"><el-button text @click="selectionDialog = true">查看已选</el-button><el-button text :disabled="removing" @click="selected = []">取消选择</el-button><el-button type="primary" :loading="removing" @click="removeSelected"><Trash2 :size="15" />移入废纸篓</el-button></div></div>
     <el-dialog v-model="selectionDialog" title="全部已选副本" width="70%"><div class="selection-list"><div v-for="file in selected" :key="file" class="selected-file"><span>{{ file }}</span><el-button text @click="reveal(file)">查看位置</el-button></div></div></el-dialog>
   </div>
 </template>

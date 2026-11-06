@@ -4,10 +4,11 @@ import { invoke, isTauri } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { revealItemInDir } from '@tauri-apps/plugin-opener';
 import { ElMessage } from 'element-plus';
-import { Package, Search, RotateCw, Monitor, HardDrive, Layers, ShieldCheck, Info, ListChecks, FolderOpen } from 'lucide-vue-next';
+import { Package, Search, Monitor, ShieldCheck, Info, ListChecks, FolderOpen } from 'lucide-vue-next';
 import PageHeader from '../layout/PageHeader.vue';
+import ScanAction from '../components/ScanAction.vue';
 import ScanningRadar from '../layout/ScanningRadar.vue';
-import { runTask, activeTask, cancelTask } from '../tasks';
+import { runTask, activeTask } from '../tasks';
 interface AppItem { key:string;name:string;pkg_type:string;version:string;size:string;size_bytes:number;description:string;icon:string;desktop_file:string;is_system:boolean;has_ui:boolean;can_uninstall:boolean;install_path:string;uninstall_note:string }
 interface AppChannel {id:string;status:string;count:number|null;note:string}
 interface ScanReport {apps:AppItem[];channels:AppChannel[];warnings:string[];checked_at:string}
@@ -122,21 +123,17 @@ onDeactivated(()=>{uninstallDialog.value=false;profileDialog.value=false;});
 <template>
   <div class="subpage-container">
     <PageHeader title="应用管理" subtitle="把安装来源、关联数据与每次卸载的影响放在一起。">
-      <template #actions><el-button v-if="queue.length" @click="uninstallDialog=true"><ListChecks :size="15"/>卸载队列 {{ queue.length }}</el-button><el-button @click="loadApps" :loading="scanning" :disabled="!desktopAvailable||uninstalling"><RotateCw :size="15"/>刷新列表</el-button></template>
+      <template #actions><el-button v-if="queue.length" @click="uninstallDialog=true"><ListChecks :size="15"/>卸载队列 {{ queue.length }}</el-button><ScanAction :scanning="scanning" :task="activeTask('get_installed_apps_report')" :disabled="!desktopAvailable||uninstalling" hint="读取应用中，可切换页面" label="刷新列表" @start="loadApps" /></template>
     </PageHeader>
     <div class="subpage-content">
       <div v-if="!desktopAvailable" class="desktop-notice"><Monitor :size="38"/><h2>你的应用，一目了然</h2><p>请在 AppClear 桌面应用中查看本机已安装软件。</p><span>浏览器预览不会读取应用列表</span></div>
       <template v-else>
-        <div v-if="scanning" class="scan-controls"><span>扫描在后台继续，可以切换页面</span><el-button v-if="activeTask('get_installed_apps_report')" @click="cancelTask(activeTask('get_installed_apps_report')!.id)">停止扫描</el-button></div>
+
         <ScanningRadar v-if="scanning&&!loaded" title="正在识别你的应用" sub-title="逐个读取安装渠道，并记录未能读取的范围" :tips="['读取桌面入口与独立安装结构…','核对系统包的手动安装标记…','识别 Flatpak 安装范围与完整应用标识…']"/>
         <div v-else class="table-container">
-          <section class="apps-summary">
-            <div class="summary-stat"><span class="summary-icon"><Monitor :size="18"/></span><div><strong>{{ loaded?userAppsCount:'—' }}</strong><span>已识别桌面应用</span></div></div>
-            <div class="summary-stat"><span class="summary-icon cyan"><Layers :size="18"/></span><div><strong>{{ loaded?apps.length:'—' }}</strong><span>已识别应用与工具</span></div></div>
-            <div class="summary-stat"><span class="summary-icon soft"><HardDrive :size="18"/></span><div><strong>{{ loaded?installedSize:'—' }}</strong><span>已统计占用 · {{ unknownSizes }} 项体积未知</span></div></div>
-          </section>
+          <div class="result-summary"><strong>{{ loaded ? userAppsCount : '—' }} <small>个桌面应用</small></strong><span>{{ apps.length }} 个应用与工具 · 已统计 {{ installedSize }}<template v-if="unknownSizes"> · {{ unknownSizes }} 项大小未知</template></span></div>
           <div v-if="loadError" class="coverage-warning" role="alert">应用读取未完成：{{ loadError }}</div>
-          <div v-if="report" class="channel-strip"><el-tooltip v-for="channel in report.channels" :key="channel.id" :content="channel.note"><el-tag :type="channel.status==='ok'?'success':channel.status==='unavailable'?'info':'warning'" size="small">{{ channel.id.toUpperCase() }} · {{ channel.status==='unavailable'?'未安装':channel.status==='failed'?'失败，数量未知':channel.status==='partial'?'部分读取':channel.status==='cancelled'?'已停止':channel.count===null?'已查询':channel.count+' 项' }}</el-tag></el-tooltip><span class="checked-time">{{ new Date(report.checked_at).toLocaleTimeString() }}</span></div>
+          <details v-if="report" class="interaction-details"><summary>安装渠道与检测范围</summary><div class="channel-strip"><el-tooltip v-for="channel in report.channels" :key="channel.id" :content="channel.note"><el-tag :type="channel.status==='ok'?'success':channel.status==='unavailable'?'info':'warning'" size="small">{{ channel.id.toUpperCase() }} · {{ channel.status==='unavailable'?'未安装':channel.status==='failed'?'失败，数量未知':channel.status==='partial'?'部分读取':channel.status==='cancelled'?'已停止':channel.count===null?'已查询':channel.count+' 项' }}</el-tag></el-tooltip><span class="checked-time">{{ new Date(report.checked_at).toLocaleTimeString() }}</span></div></details>
           <details v-if="report?.warnings.length" class="coverage-warning"><summary>有 {{ report.warnings.length }} 条覆盖提示，结果可能不完整</summary><p v-for="warning in report.warnings" :key="warning">{{ warning }}</p></details>
           <div v-if="loaded" class="apps-toolbar">
             <el-radio-group v-model="activeCategory" size="small"><el-radio-button value="user">桌面应用</el-radio-button><el-radio-button value="all">全部工具</el-radio-button></el-radio-group>
@@ -144,15 +141,15 @@ onDeactivated(()=>{uninstallDialog.value=false;profileDialog.value=false;});
             <el-select v-model="sort" class="sort-select" aria-label="应用排序"><el-option label="按名称" value="name"/><el-option label="占用从大到小" value="size"/><el-option label="按安装渠道" value="source"/></el-select>
             <el-input v-model="appSearch" placeholder="搜索名称、软件包或描述" clearable class="app-search"><template #prefix><Search :size="15"/></template></el-input>
           </div>
-          <div v-if="loaded" class="list-meta"><span>{{ filteredApps.length }} 项 · 已选 {{ selectedApps.length }} 项 <el-button v-if="selectedApps.length" link type="danger" :disabled="uninstalling||planLoading" @click="prepareQueue(selectedApps)">逐项预览卸载</el-button></span><span><ShieldCheck :size="12"/>系统组件受保护</span></div>
+          <div v-if="loaded" class="list-meta"><span>{{ filteredApps.length }} 项 · 已选 {{ selectedApps.length }} 项 <el-button v-if="selectedApps.length" link type="danger" :disabled="uninstalling||planLoading" @click="prepareQueue(selectedApps)">预览卸载</el-button></span><span><ShieldCheck :size="12"/>系统组件受保护</span></div>
           <div v-if="loaded" class="app-list"><el-table :data="filteredApps" :row-key="appRowKey" height="100%" stripe style="width:100%" :empty-text="appSearch?'没有找到匹配应用':'此分类没有已识别应用'" @selection-change="selectedApps=$event">
             <el-table-column type="selection" width="42" :selectable="(app:AppItem)=>app.can_uninstall&&!app.is_system&&!uninstalling"/>
             <el-table-column label="应用名称" min-width="245"><template #default="{row}"><div class="app-identity"><img v-if="row.icon.startsWith('data:image/')&&!failedIcons.has(row.key)" :src="row.icon" alt="" class="app-icon" @error="iconFailed(row.key)"/><span v-else class="app-icon app-icon-fallback"><Package :size="23"/></span><div class="app-name-cell"><button class="app-display-name app-detail-link" @click="openProfile(row)">{{ row.name }}</button><span class="app-pkg-name" :title="row.install_path||row.key">{{ row.install_path||row.key }}</span></div></div></template></el-table-column>
             <el-table-column label="安装渠道" width="112"><template #default="{row}"><el-tag size="small" :type="row.pkg_type==='flatpak'?'success':'primary'">{{ row.pkg_type==='manual'?'独立应用':row.pkg_type.toUpperCase() }}</el-tag></template></el-table-column>
             <el-table-column prop="version" label="版本" min-width="125" show-overflow-tooltip/>
             <el-table-column prop="size" label="占用空间" width="115"/>
-            <el-table-column prop="description" label="描述" min-width="180" show-overflow-tooltip/>
-            <el-table-column label="操作" width="130" fixed="right" align="center"><template #default="{row}"><el-button link @click="openProfile(row)">详情</el-button><el-tooltip :content="row.uninstall_note||(row.is_system?'系统组件受保护':'查看影响预览')"><span><el-button type="danger" link :disabled="row.is_system||!row.can_uninstall||uninstalling||planLoading" @click="prepareQueue([row])">卸载</el-button></span></el-tooltip></template></el-table-column>
+
+            <el-table-column label="操作" width="88" fixed="right" align="center"><template #default="{row}"><el-tooltip :content="row.uninstall_note||(row.is_system?'系统组件受保护':'查看影响预览')"><span><el-button type="danger" link :disabled="row.is_system||!row.can_uninstall||uninstalling||planLoading" @click="prepareQueue([row])">卸载</el-button></span></el-tooltip></template></el-table-column>
           </el-table></div>
         </div>
       </template>
@@ -171,7 +168,7 @@ onDeactivated(()=>{uninstallDialog.value=false;profileDialog.value=false;});
           <template v-else-if="currentEntry.plan"><p class="uninstall-note">{{ currentEntry.plan.note }}</p><p class="uninstall-summary">{{ currentEntry.plan.mode==='simulation'?'原生仿真范围':currentEntry.plan.mode==='exact-scope'?'精确安装身份范围':'范围无法确认' }} · 预计移除 {{ currentEntry.plan.estimated_size }}</p><div class="uninstall-items"><div v-for="pkg in currentEntry.plan.packages" :key="pkg.name" class="uninstall-item"><div class="uninstall-item-copy"><strong>{{ pkg.name }}</strong><span>{{ pkg.version||'版本未知' }}</span></div><span class="uninstall-size">{{ formatBytes(pkg.size_bytes) }}</span></div></div></template>
         </template>
       </div>
-      <template #footer><el-button :disabled="uninstalling||planLoading" @click="uninstallDialog=false">关闭</el-button><el-button v-if="uninstalling" @click="stopQueue=true" :disabled="stopQueue">{{ stopQueue?'完成当前项后停止':'完成当前项后停止队列' }}</el-button><el-button v-if="queue.some(e=>e.status==='failed')" :disabled="uninstalling||planLoading" @click="executeQueue(true)">重试失败项</el-button><el-button type="danger" :loading="uninstalling" :disabled="!queue.some(e=>e.status==='pending')||planLoading" @click="executeQueue()">确认所选范围并执行 {{ queue.filter(e=>e.status==='pending').length }} 项</el-button></template>
+      <template #footer><el-button :disabled="uninstalling||planLoading" @click="uninstallDialog=false">关闭</el-button><el-button v-if="uninstalling" @click="stopQueue=true" :disabled="stopQueue">{{ stopQueue?'完成当前项后停止':'完成当前项后停止队列' }}</el-button><el-button v-if="queue.some(e=>e.status==='failed')" :disabled="uninstalling||planLoading" @click="executeQueue(true)">重试失败项</el-button><el-button type="danger" :loading="uninstalling" :disabled="!queue.some(e=>e.status==='pending')||planLoading" @click="executeQueue()">确认卸载 {{ queue.filter(e=>e.status==='pending').length }} 项</el-button></template>
     </el-dialog>
     <el-dialog v-model="profileDialog" :title="`${profile?.app.name??'应用'} · 详情与关联`" width="min(760px,calc(100vw - 40px))">
       <div v-loading="profileLoading" class="profile-body"><p v-if="profileError" class="coverage-warning">{{ profileError }}</p><template v-if="profile"><div class="profile-id"><Package :size="32"/><div><strong>{{ profile.app.name }}</strong><span>{{ profile.app.pkg_type.toUpperCase() }} · {{ profile.app.version||'版本未知' }} · {{ profile.app.size||'占用未知' }}</span></div></div><p class="profile-path">{{ profile.app.install_path||profile.app.key }}</p><p class="uninstall-note">{{ profile.app.description }}</p>

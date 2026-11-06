@@ -17,14 +17,14 @@ const groups = [
   { label: '工作空间', items: [
     { path: '/', label: '空间概览', icon: Sparkles },
     { path: '/clean', label: '垃圾清理', icon: Trash2 },
-    { path: '/storage', label: '磁盘透视', icon: HardDrive },
+    { path: '/storage', label: '空间透视', icon: HardDrive },
     { path: '/monitor', label: '本机监控', icon: Activity },
   ] },
   { label: '应用与系统', items: [
-    { path: '/apps', label: '应用程序', icon: AppWindow },
+    { path: '/apps', label: '应用管理', icon: AppWindow },
     { path: '/updates', label: '软件更新', icon: ArrowUpCircle },
     { path: '/autostart', label: '启动项', icon: Power },
-    { path: '/entries', label: '桌面入口', icon: PanelsTopLeft },
+    { path: '/entries', label: '应用入口', icon: PanelsTopLeft },
   ] },
   { label: '文件整理', items: [
     { path: '/large-files', label: '大文件', icon: Files },

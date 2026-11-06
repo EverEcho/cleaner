@@ -4,13 +4,14 @@ import { useRoute } from 'vue-router';
 import { invoke, isTauri } from '@tauri-apps/api/core';
 import { revealItemInDir } from '@tauri-apps/plugin-opener';
 import { ElMessage, ElMessageBox } from 'element-plus';
-import { ChevronDown, ChevronUp, Folder, File, Search, Copy, Settings, Blocks, Globe, Container, Braces, RotateCw, ShieldCheck, Sparkles, HardDrive, Monitor } from 'lucide-vue-next';
+import { ChevronDown, ChevronUp, Folder, File, Search, Copy, Settings, Blocks, Globe, Container, Braces, ShieldCheck, Sparkles, Monitor } from 'lucide-vue-next';
 import { platformInfo, loadPlatform } from '../platform';
 import PageHeader from '../layout/PageHeader.vue';
+import ScanAction from '../components/ScanAction.vue';
 import ScanningRadar from '../layout/ScanningRadar.vue';
 import ScanScope from '../components/ScanScope.vue';
 import ActionResults from '../components/ActionResults.vue';
-import { activeTask, cancelTask, runTask } from '../tasks';
+import { activeTask, runTask } from '../tasks';
 import { preferences, loadPreferences, savePreferences } from '../preferences';
 import { copyPath, type ActionReport } from '../cleanup';
 
@@ -207,28 +208,25 @@ onDeactivated(() => {
   <main class="clean-page">
     <PageHeader title="垃圾清理" subtitle="找回磁盘空间，让系统轻装运行。">
       <template #actions>
-        <el-button :disabled="!desktopAvailable || scanning || cleaning || authorizing || developerScanning" @click="scan"><RotateCw :size="15" />重新扫描</el-button>
+          <el-dropdown trigger="click" :disabled="!desktopAvailable || scanning || cleaning || authorizing || developerScanning"><el-button text :disabled="!desktopAvailable || scanning || cleaning || authorizing || developerScanning">更多<ChevronDown :size="14" /></el-button><template #dropdown><el-dropdown-menu><el-dropdown-item @click="openDeveloper"><Braces :size="14" />开发者扫描</el-dropdown-item><el-dropdown-item @click="authorize"><ShieldCheck :size="14" />{{ authorizing ? '正在授权…' : '管理员授权' }}</el-dropdown-item><el-dropdown-item divided @click="sortBySize = !sortBySize">{{ sortBySize ? '改为按名称排序' : '改为按大小排序' }}</el-dropdown-item></el-dropdown-menu></template></el-dropdown>
+        <ScanAction :scanning="scanning" :task="task" :disabled="!desktopAvailable || cleaning || authorizing || developerScanning" :hint="`已检查 ${task?.current || 0} 个文件`" @start="scan" />
       </template>
     </PageHeader>
     <div class="clean-content">
       <div v-if="!desktopAvailable" class="desktop-notice"><Monitor :size="38" /><h2>连接你的电脑，开启清理</h2><p>请在 AppClear 桌面应用中扫描本机文件。</p><span>浏览器预览不会读取你的磁盘</span></div>
       <template v-else>
-        <section class="scan-overview" :class="{ 'is-scanning': scanning }">
-          <div class="overview-symbol"><HardDrive :size="28" /><span /></div>
-          <div class="overview-copy"><span class="eyebrow">{{ scanning ? 'SCANNING YOUR SPACE' : 'SPACE TO RECLAIM' }}</span><h2>{{ scanError ? '扫描未完成' : scanning ? `${task?.current || 0} 个文件` : size(totalBytes) }}</h2><p>{{ scanning ? '正在发现可以释放的空间' : '扫描时逻辑大小 · 实际释放空间可能不同' }}<span v-if="!scanning && hasScanFailures" class="scan-failure"> · 部分项目待核对</span></p></div>
-          <div v-if="scanning && task" class="overview-status"><el-button text @click="cancelTask(task.id)">停止扫描</el-button></div><div v-else class="overview-status"><ShieldCheck :size="16" /><span>先确认，再清理</span></div>
-        </section>
+        <div class="result-summary"><strong>{{ scanError ? '扫描未完成' : scanning ? '正在扫描…' : size(totalBytes) }} <small v-if="!scanError && !scanning">扫描结果</small></strong><span>{{ scanning ? '完成后选择要清理的项目' : '扫描时逻辑大小 · 实际释放空间可能不同' }}<template v-if="!scanning && hasScanFailures"> · 部分项目待核对</template></span></div>
         <div class="list-toolbar">
           <el-checkbox :model-value="allSelected" :disabled="scanning || cleaning || !allItems.length" @change="toggleAll">全部选择</el-checkbox>
-          <div class="toolbar-actions"><button class="quiet-button" :disabled="scanning || cleaning || authorizing || developerScanning" @click="openDeveloper"><Braces :size="14" />开发者深度扫描</button><button class="quiet-button authorization-button" :disabled="scanning || cleaning || authorizing || developerScanning" @click="authorize"><ShieldCheck :size="14" />{{ authorizing ? '正在授权…' : '管理员授权' }}</button></div>
+          <el-input v-model="search" clearable placeholder="搜索项目或路径" :disabled="cleaning" class="clean-search"><template #prefix><Search :size="14" /></template></el-input>
         </div>
         <div class="clean-list" :aria-busy="scanning">
-          <ScanScope :disabled="scanning || cleaning || developerScanning" />
+          <ScanScope exclusions-only :disabled="scanning || cleaning || developerScanning" />
           <ActionResults :report="result" />
-          <div class="filter-toolbar"><el-input v-model="search" clearable placeholder="搜索项目、路径或来源" :disabled="cleaning"><template #prefix><Search :size="14" /></template></el-input><el-switch v-model="sortBySize" active-text="按大小排序" /></div>
+
           <el-alert v-if="scanError" title="扫描未完成" :description="scanError" type="error" :closable="false" />
           <details v-for="category in scanWarnings" :key="category.id" class="developer-warning"><summary>扫描覆盖提示 · 查看未覆盖目录</summary><p>{{ category.scan_summary }}</p><p>{{ category.warning }}</p></details>
-          <div v-if="scanning && !groups.length" class="scan-state"><ScanningRadar title="正在探索你的磁盘" :sub-title="task?.path || '准备扫描…'" :tips="[]" /><p class="scan-path" :title="task?.path">{{ task?.path }}</p></div>
+          <div v-if="scanning && !groups.length" class="scan-state"><ScanningRadar title="正在探索你的磁盘" :sub-title="task?.path || '准备扫描…'" :tips="[]" /></div>
           <div v-if="!scanning && !scanError && !groups.length" class="clean-empty"><Sparkles :size="35" /><h3>{{ hasScanFailures ? '扫描只覆盖了部分范围' : '空间已经很轻盈' }}</h3><p>{{ hasScanFailures ? '已读取范围内没有可清理项目，请查看覆盖提示后继续扫描。' : '本次扫描没有发现可清理的文件。' }}</p></div>
           <section v-for="group in groups" :key="group.id" class="clean-group">
             <button class="group-heading" @click="toggleGroup(group.id)"><span class="group-icon" :class="group.id"><component :is="group.icon" :size="18" /></span><span class="group-title"><strong>{{ group.title }}</strong><small>{{ group.items.length }} 个清理项目</small></span><span class="group-total">{{ size(groupBytes(group.items)) }}<small>已选 {{ size(groupBytes(group.items, true)) }}</small></span><span v-if="!group.items.length" class="clean-status">很干净</span><ChevronUp v-if="expandedGroups.has(group.id)" :size="16" class="heading-chevron" /><ChevronDown v-else :size="16" class="heading-chevron" /></button>
@@ -254,7 +252,7 @@ onDeactivated(() => {
         </div>
       </template>
     </div>
-    <footer v-if="desktopAvailable && !scanning" class="clean-action-bar"><div class="selection-copy"><span class="selection-icon"><Sparkles :size="19" /></span><div><strong>{{ size(selectedBytes) }} <small>预计可回收</small></strong><p>已选择 {{ selected.length }} 项 · 扫描时逻辑大小</p></div></div><button class="quiet-button" @click="selectionDialog = true">查看全部已选</button><button class="primary-clean" :disabled="!selected.length || cleaning || authorizing || developerScanning" @click="clean"><Sparkles :size="17" />{{ cleaning ? '正在清理…' : '释放空间' }}</button></footer>
+    <footer v-if="desktopAvailable && !scanning && selected.length" class="clean-action-bar"><div class="selection-copy"><span class="selection-icon"><Sparkles :size="19" /></span><div><strong>{{ size(selectedBytes) }} <small>预计可回收</small></strong><p>已选择 {{ selected.length }} 项 · 扫描时逻辑大小</p></div></div><button class="quiet-button" @click="selectionDialog = true">查看已选</button><button class="primary-clean" :disabled="!selected.length || cleaning || authorizing || developerScanning" @click="clean"><Sparkles :size="17" />{{ cleaning ? '正在清理…' : '清理所选' }}</button></footer>
     <el-dialog v-model="developerDialog" title="开发者深度扫描" width="520px" :close-on-click-modal="!developerScanning" :close-on-press-escape="!developerScanning" :show-close="!developerScanning">
       <div class="developer-dialog-body"><p class="developer-note">扫描历史包缓存与项目构建产物，统计实际大小和路径，结果加入本页垃圾列表。所有项目默认不勾选。</p>
       <el-form label-position="top">
@@ -262,8 +260,8 @@ onDeactivated(() => {
         <el-form-item label="保留最近使用或修改的文件"><el-select v-model="developerDays" :disabled="developerScanning"><el-option v-for="days in [1,7,30,90]" :key="days" :label="`${days} 天`" :value="days" /></el-select></el-form-item>
       </el-form>
       <p class="developer-note">识别 Node.js、Rust、Maven、Gradle、Flutter、.NET、Python 项目。保留源码、锁文件、SDK、虚拟环境和配置；清理后可能需要重新下载依赖或构建。</p>
-      <div v-if="developerScanning" class="developer-scan-state"><el-progress :percentage="100" :indeterminate="true" :show-text="false" /><p>已检查 {{ developerTask?.current || 0 }} 个目录</p><p class="scan-path" :title="developerTask?.path">{{ developerTask?.path }}</p><el-button v-if="developerTask" @click="cancelTask(developerTask.id)">停止扫描，保留已完成结果</el-button></div>
-      </div><template #footer><el-button :disabled="developerScanning" @click="developerDialog = false">取消</el-button><el-button type="primary" :loading="developerScanning" @click="scanDeveloper">扫描并统计</el-button></template>
+      <div v-if="developerScanning" class="developer-scan-state"><el-progress :percentage="100" :indeterminate="true" :show-text="false" /><p>已检查 {{ developerTask?.current || 0 }} 个目录</p><p class="scan-path" :title="developerTask?.path">{{ developerTask?.path }}</p></div>
+      </div><template #footer><el-button :disabled="developerScanning" @click="developerDialog = false">取消</el-button><ScanAction :scanning="developerScanning" :task="developerTask" label="开始扫描" @start="scanDeveloper" /></template>
     </el-dialog>
     <el-dialog v-model="selectionDialog" title="全部已选项目" width="70%"><div class="selection-list"><div v-for="item in selectedDetails" :key="item.path" class="selected-file"><span>{{ item.name }} · {{ item.size_str }}<small>{{ item.path }}</small></span><el-button v-if="!item.path.startsWith('system:')" text @click="reveal(item)">查看位置</el-button></div></div></el-dialog>
   </main>
@@ -285,6 +283,7 @@ onDeactivated(() => {
 .overview-status { display: flex; align-items: center; gap: 7px; color: var(--text-muted); font-size: 11px; white-space: nowrap; align-self: flex-start; margin-top: 4px; }
 .overview-status svg { color: var(--cyan); }
 .scan-failure { color: var(--warning); }
+.clean-search { max-width: 280px; }
 .list-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 17px 3px; flex-shrink: 0; flex-wrap: wrap; }
 .toolbar-actions { display: flex; gap: 9px; flex-wrap: wrap; }
 .quiet-button { display: inline-flex; align-items: center; gap: 7px; border: 1px solid var(--line); border-radius: 8px; color: var(--text-secondary); background: var(--surface-subtle); padding: 8px 11px; font-size: 11px; font-family: inherit; cursor: pointer; transition: background .18s, border-color .18s; }
