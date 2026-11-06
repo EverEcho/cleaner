@@ -115,12 +115,18 @@ Linux CPU 用累计计数差值计算，首次采样未知；内存使用量为�
 
 ```bash
 pnpm install --frozen-lockfile
+./run.sh              # 交互菜单，默认重新编译并运行
+./run.sh rebuild      # 重新编译并运行，不生成安装包
 ./run.sh dev
 ./run.sh run
 ./run.sh build
 ./run.sh install
 ./run.sh uninstall
 ```
+
+交互菜单按“运行”“打包与安装”“管理”分组：1 重新编译并运行（默认）、2 运行现有版本、3 开发模式、4 编译并生成安装包、5 编译并安装到本机、6 授权管理、7 卸载本机应用、0 退出。授权管理提供配置、移除组件和返回主菜单；macOS 使用系统授权。菜单卸载会显示目标并要求确认。
+
+`./run.sh rebuild` 增量编译当前源码，成功后启动；`./run.sh run` 仅运行已有程序，程序不存在时提示先编译。菜单“编译并生成安装包”和 `./run.sh build` 都会重新构建前端、主程序与 Linux 授权助手，生成当前平台的应用包，默认产物目录为 `src-tauri/target/release/bundle/`。只编译可执行文件可用 `./run.sh build --no-bundle`。`install` 每次编译并安装后启动，`reinstall`、`force` 保留兼容。
 
 脚本可从任意目录调用。Linux 安装用户级菜单入口；macOS 安装到 `~/Applications/AppClear.app`，旧应用移入废纸篓。Linux 支持 DEB/RPM/AppImage，macOS 支持 APP/DMG，须在对应系统构建。例如 `./run.sh build --bundles deb`。Mac 发布签名、公证和真实设备验收仍需完成。
 

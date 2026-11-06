@@ -30,7 +30,7 @@ install() {
     /usr/bin/ditto "$ROOT/src-tauri/target/release/bundle/macos/AppClear.app" "$MAC_APP"
     echo "已安装: $MAC_APP"
   else
-    [[ -x "$BIN" ]] || (cd "$ROOT" && pnpm tauri build --no-bundle)
+    (cd "$ROOT" && pnpm tauri build --no-bundle)
     mkdir -p "$(dirname "$TARGET")" "$ICON_DIR"
     cp "$ROOT/src-tauri/icons/128x128.png" "$ICON_DIR/cn.bit13.app.clear.png"
     # Desktop Entry quoted argument escaping, including spaces and literal %.
