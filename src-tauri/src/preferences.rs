@@ -16,6 +16,44 @@ pub struct Preferences {
     pub developer_days: u64,
     pub large_min_mb: u64,
     pub monitor_enabled: bool,
+    pub tray: TrayPreferences,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TrayMetric {
+    Cpu,
+    Memory,
+    Download,
+    Upload,
+    Disk,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(default)]
+pub struct TrayPreferences {
+    pub enabled: bool,
+    pub metrics: Vec<TrayMetric>,
+    pub show_icon: bool,
+    pub labeled: bool,
+    pub interval_ms: u64,
+    pub network_interface: String,
+    pub rate_unit: String,
+    pub close_to_tray: bool,
+    pub show_sparklines: bool,
+}
+impl Default for TrayPreferences {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            metrics: vec![TrayMetric::Download, TrayMetric::Upload],
+            show_icon: true,
+            labeled: false,
+            interval_ms: 2000,
+            network_interface: "auto".into(),
+            rate_unit: "bytes".into(),
+            close_to_tray: true,
+            show_sparklines: true,
+        }
+    }
 }
 impl Default for Preferences {
     fn default() -> Self {
@@ -26,6 +64,7 @@ impl Default for Preferences {
             developer_days: 7,
             large_min_mb: 50,
             monitor_enabled: true,
+            tray: TrayPreferences::default(),
         }
     }
 }
@@ -50,6 +89,22 @@ pub fn save(app: &tauri::AppHandle, value: Preferences) -> Result<Preferences, S
     write(&path(app)?, value)
 }
 fn validate(value: &Preferences) -> Result<(), String> {
+    let tray = &value.tray;
+    if ![1000, 2000, 3000, 5000].contains(&tray.interval_ms)
+        || !["bytes", "bits"].contains(&tray.rate_unit.as_str())
+        || tray.network_interface.is_empty()
+        || tray.network_interface.len() > 128
+        || tray.network_interface.chars().any(char::is_control)
+        || tray.metrics.len() > 5
+        || tray
+            .metrics
+            .iter()
+            .enumerate()
+            .any(|(i, metric)| tray.metrics[..i].contains(metric))
+        || (!tray.show_icon && tray.metrics.is_empty())
+    {
+        return Err("菜单栏设置无效，请保留图标或至少一个指标".into());
+    }
     if value.developer_days == 0
         || value.developer_days > 3650
         || value.large_min_mb == 0
@@ -140,6 +195,42 @@ pub fn pick_directory(title: Option<String>) -> Result<Option<String>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn old_settings_gain_tray_defaults_and_keep_existing_preferences() {
+        let value: Preferences =
+            serde_json::from_str(r#"{"monitor_enabled":false,"exclusions":["/keep"]}"#).unwrap();
+        assert!(!value.monitor_enabled);
+        assert_eq!(value.exclusions, vec!["/keep"]);
+        assert_eq!(
+            value.tray.metrics,
+            vec![TrayMetric::Download, TrayMetric::Upload]
+        );
+        assert_eq!(value.tray.interval_ms, 2000);
+        assert!(validate(&value).is_ok());
+    }
+    #[test]
+    fn tray_configuration_validates_visibility_order_and_sampling_range() {
+        let mut value = Preferences::default();
+        value.tray.metrics = vec![TrayMetric::Memory, TrayMetric::Cpu];
+        let roundtrip: Preferences =
+            serde_json::from_str(&serde_json::to_string(&value).unwrap()).unwrap();
+        assert_eq!(roundtrip.tray.metrics, value.tray.metrics);
+        value.tray.metrics.push(TrayMetric::Cpu);
+        assert!(validate(&value).is_err());
+        value.tray.metrics.clear();
+        value.tray.show_icon = false;
+        assert!(validate(&value).is_err());
+        value.tray.show_icon = true;
+        assert!(validate(&value).is_ok());
+        value.tray.interval_ms = 0;
+        assert!(validate(&value).is_err());
+        value.tray.interval_ms = 1000;
+        value.tray.rate_unit = "invalid".into();
+        assert!(validate(&value).is_err());
+        value.tray.rate_unit = "bits".into();
+        value.tray.network_interface = "en0\ninvalid".into();
+        assert!(validate(&value).is_err());
+    }
     #[test]
     fn validates_ranges_and_paths() {
         let mut p = Preferences::default();

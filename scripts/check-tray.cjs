@@ -1,0 +1,40 @@
+const {createRequire}=require('node:module'),{readFileSync}=require('node:fs'),assert=require('node:assert/strict');
+const req=createRequire(process.cwd()+'/package.json'),vue=req('vue'),ts=req('typescript'),sfc=req('vue/compiler-sfc');
+const renderer=vue.createRenderer({createElement:()=>({}),createText:()=>({}),createComment:()=>({}),insert(){},remove(){},parentNode:()=>null,nextSibling:()=>null,setText(){},setElementText(){},patchProp(){}});
+const flush=async()=>{for(let i=0;i<12;i++){await Promise.resolve();await vue.nextTick();}};
+function evaluate(code,mods){const exports={};new Function('require','exports',ts.transpileModule(code,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2020}}).outputText)(id=>mods[id]||new Proxy({default:{}},{get:(o,k)=>k in o?o[k]:()=>{}}),exports);return exports;}
+(async()=>{
+ let fail=false,hold;
+ const saves=[],errors=[],warnings=[],events=new Map();
+ const mods={vue,'@tauri-apps/api/core':{isTauri:()=>true,invoke:async(cmd,args)=>{
+  if(cmd==='get_preferences')return {exclusions:['/kept'],monitor_enabled:true};
+  assert.equal(cmd,'save_preferences');saves.push(structuredClone(args.preferences));if(hold)await hold;if(fail)throw Error('fixture save failure');return args.preferences;
+ }},'@tauri-apps/api/event':{listen:async(name,fn)=>{events.set(name,fn);return ()=>{events.delete(name);};}},'element-plus':{ElMessage:{error:e=>errors.push(e),warning:e=>warnings.push(e)}}};
+ const preferences=evaluate(readFileSync('src/preferences.ts','utf8'),mods);mods['../preferences']=preferences;
+ await preferences.loadPreferences();assert.equal(preferences.preferences.tray.interval_ms,2000,'old settings retain tray defaults');
+ const snapshot=vue.ref(null);mods['../monitor']={monitorSnapshot:snapshot};
+ const descriptor=sfc.parse(readFileSync('src/components/TraySettings.vue','utf8')).descriptor;
+ const component=evaluate(sfc.compileScript(descriptor,{id:'tray-settings'}).content,mods).default;component.render=()=>null;
+ const app=renderer.createApp(component);app.mount({});const state=app._instance.setupState,prefs=preferences.preferences;
+ await state.move('upload',-1);await flush();assert.deepEqual([...prefs.tray.metrics],['upload','download']);
+ await state.toggleMetric('cpu');await flush();assert.deepEqual([...prefs.tray.metrics],['upload','download','cpu']);
+ await state.change({show_icon:false});await state.toggleMetric('cpu');await flush();await state.toggleMetric('upload');await flush();
+ const count=saves.length;await state.toggleMetric('download');await flush();assert.equal(saves.length,count);assert.equal(warnings.length,1,'last visible element cannot disappear');
+ await state.change({show_icon:true});await state.toggleMetric('download');await flush();assert.equal(prefs.tray.metrics.length,0,'icon-only mode works');
+ await state.change({network_interface:'missing-en9',rate_unit:'bits',interval_ms:5000});assert.ok(state.interfaces.includes('missing-en9'),'unplugged selected adapter stays configurable');
+ fail=true;await state.change({interval_ms:1000});assert.equal(prefs.tray.interval_ms,5000,'failed saves preserve the last accepted settings');assert.equal(errors.length,1);fail=false;
+ await state.change({interval_ms:1000});assert.equal(prefs.tray.interval_ms,1000,'failed save does not block retry');
+ let release;hold=new Promise(resolve=>release=resolve);const pending=state.change({labeled:true});await flush();await state.change({labeled:false});release();await pending;hold=undefined;assert.equal(prefs.tray.labeled,true,'rapid overlapping edits are guarded');
+ const stop=await preferences.subscribePreferences();events.get('preferences-changed')({payload:{...saves[saves.length-1],monitor_enabled:false}});assert.equal(prefs.monitor_enabled,false,'other windows receive saved settings');stop();app.unmount();
+ console.log('PASS tray ordering, metric visibility, icon-only mode, adapter persistence, failure retry, rapid edit guard and preference sync');
+ const native=mods['@tauri-apps/api/core'];native.invoke=async()=>({sampled_at:1000,cpu_percent:20,memory_total:100,memory_used:40,network_down:null,network_up:null,network_interface:'en0',network_interfaces:['en0'],warnings:[]});
+ const mon=evaluate(readFileSync('src/monitor.ts','utf8'),{...mods,'./preferences':preferences});
+ prefs.monitor_enabled=true;mon.startMonitor();await flush();assert.equal(mon.monitorHistory.value.length,1);
+ const emit=(time,adapter='en0')=>events.get('monitor-snapshot')({payload:{sampled_at:time,cpu_percent:20,memory_total:100,memory_used:40,network_down:10,network_up:20,network_interface:adapter,network_interfaces:[adapter],warnings:[]}});
+ emit(1000);emit(2000);emit(1500);assert.equal(mon.monitorHistory.value.length,2,'duplicates and stale events do not enter history');
+ emit(3000,'en1');assert.equal(mon.monitorHistory.value.length,1,'adapter changes start a separate trend');
+ prefs.monitor_enabled=false;await flush();emit(4000,'en1');assert.equal(mon.monitorSnapshot.value.sampled_at,3000,'pause retains last valid sample');
+ mon.stopMonitor();assert.ok(!events.has('monitor-snapshot'),'listener disposed');
+ assert.equal(mon.formatRate(1024),'1.0 KB/s');assert.equal(mon.formatRate(1000000,true),'8.0 Mb/s');assert.equal(mon.formatRate(null),'—');assert.equal(mon.formatRate(0),'0 B/s');
+ console.log('PASS monitor history ordering, pause, adapter switch, listener cleanup and byte/bit units');
+})().catch(error=>{console.error(error);process.exitCode=1;});

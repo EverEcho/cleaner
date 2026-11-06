@@ -26,6 +26,7 @@ pub mod software_updates;
 pub mod storage;
 pub mod system_scan;
 pub mod tasks;
+pub mod tray;
 pub mod uninstall_preview;
 #[cfg_attr(target_os = "macos", path = "macos/updates.rs")]
 pub mod updates;
@@ -119,7 +120,12 @@ fn save_preferences(
     app: AppHandle,
     preferences: preferences::Preferences,
 ) -> Result<preferences::Preferences, String> {
-    preferences::save(&app, preferences)
+    let saved = preferences::save(&app, preferences)?;
+    app.emit("preferences-changed", &saved)
+        .map_err(|e| e.to_string())?;
+    #[cfg(target_os = "macos")]
+    tray::update(&app, &saved)?;
+    Ok(saved)
 }
 #[tauri::command]
 async fn pick_directory(title: Option<String>) -> Result<Option<String>, String> {
@@ -128,10 +134,41 @@ async fn pick_directory(title: Option<String>) -> Result<Option<String>, String>
         .map_err(|e| e.to_string())?
 }
 #[tauri::command]
-async fn get_monitor_snapshot() -> Result<monitor::MonitorSnapshot, String> {
-    tauri::async_runtime::spawn_blocking(monitor::sample)
+async fn get_monitor_snapshot(app: AppHandle) -> Result<monitor::MonitorSnapshot, String> {
+    let interface = preferences::load(&app)?.tray.network_interface;
+    tauri::async_runtime::spawn_blocking(move || monitor::sample(&interface))
         .await
         .map_err(|e| e.to_string())?
+}
+#[tauri::command]
+fn open_main_page(app: AppHandle, route: String) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        tray::open_main(&app, &route)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (app, route);
+        Err("当前系统不支持菜单栏面板".into())
+    }
+}
+#[tauri::command]
+fn hide_tray_panel(app: AppHandle) {
+    #[cfg(target_os = "macos")]
+    tray::hide(&app);
+    #[cfg(not(target_os = "macos"))]
+    let _ = app;
+}
+#[tauri::command]
+fn quit_app(app: AppHandle) {
+    app.exit(0);
+}
+#[tauri::command]
+fn show_tray_panel(app: AppHandle) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    { tray::show_panel(&app) }
+    #[cfg(not(target_os = "macos"))]
+    { let _ = app; Err("当前系统不支持菜单栏面板".into()) }
 }
 #[tauri::command]
 fn get_storage_roots() -> Vec<String> {
@@ -526,6 +563,13 @@ async fn refresh_software_sources(
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .setup(|app| {
+            #[cfg(target_os = "macos")]
+            tray::setup(app)?;
+            #[cfg(not(target_os = "macos"))]
+            let _ = app;
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             get_platform_info,
             get_tasks,
@@ -534,6 +578,10 @@ pub fn run() {
             save_preferences,
             pick_directory,
             get_monitor_snapshot,
+            open_main_page,
+            hide_tray_panel,
+            quit_app,
+            show_tray_panel,
             get_storage_roots,
             analyze_disk,
             request_admin_authorization,
@@ -564,8 +612,21 @@ pub fn run() {
             upgrade_tool,
             refresh_software_sources
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app, event| {
+            #[cfg(target_os = "macos")]
+            if let tauri::RunEvent::Reopen { .. } = event {
+                use tauri::Manager;
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.show();
+                    let _ = window.unminimize();
+                    let _ = window.set_focus();
+                }
+            }
+            #[cfg(not(target_os = "macos"))]
+            let _ = (app, event);
+        });
 }
 
 #[cfg(test)]

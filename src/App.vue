@@ -4,11 +4,14 @@ import { isTauri } from '@tauri-apps/api/core';
 import { ElMessage } from 'element-plus';
 import { Sparkles, Trash2, HardDrive, AppWindow, ArrowUpCircle, Power, PanelsTopLeft, Files, Copy, Monitor, ChevronRight,Activity } from 'lucide-vue-next';
 import WindowBar from './layout/WindowBar.vue';
+import AppLogo from './components/AppLogo.vue';
+import { listen } from '@tauri-apps/api/event';
+import router from './router';
 import ThemeSwitcher from './components/ThemeSwitcher.vue';
 import { desktopEntriesAvailable, loadPlatform, platformInfo } from './platform';
 import TaskStatusBar from './layout/TaskStatusBar.vue';
 import { initializeTasks,disposeTasks } from './tasks';
-import { loadPreferences } from './preferences';
+import { loadPreferences,subscribePreferences } from './preferences';
 import { startMonitor,stopMonitor } from './monitor';
 
 const native = isTauri();
@@ -32,8 +35,11 @@ const groups = [
   ] },
 ];
 const visibleGroups = computed(() => groups.map(group => ({ ...group, items: group.items.filter(item => item.path !== '/entries' || desktopEntriesAvailable.value) })));
-onMounted(() => { loadPlatform().catch(error => ElMessage.error('读取系统信息失败: ' + error)); initializeTasks().catch(error=>ElMessage.warning('任务状态连接失败: '+error)); loadPreferences().then(startMonitor).catch(error=>ElMessage.warning('设置读取失败: '+error)); });
-onUnmounted(()=>{disposeTasks();stopMonitor();});
+let disposed=false;
+const stops:(()=>void)[]=[];
+function retain(stop:()=>void){if(disposed)stop();else stops.push(stop);}
+onMounted(() => { loadPlatform().catch(error => ElMessage.error('读取系统信息失败: ' + error)); initializeTasks().catch(error=>ElMessage.warning('任务状态连接失败: '+error)); subscribePreferences().then(retain).catch(error=>ElMessage.warning('设置同步失败: '+error)); loadPreferences().then(()=>{if(!disposed)startMonitor();}).catch(error=>ElMessage.warning('设置读取失败: '+error)); if(native)void listen<string>('tray-navigate',event=>{if(['/','/monitor','/clean','/storage'].includes(event.payload))void router.push(event.payload);}).then(retain).catch(error=>ElMessage.warning('菜单栏连接失败: '+error)); });
+onUnmounted(()=>{disposed=true;stops.forEach(stop=>stop());disposeTasks();stopMonitor();});
 </script>
 
 <template>
@@ -42,7 +48,7 @@ onUnmounted(()=>{disposeTasks();stopMonitor();});
     <div class="workspace">
       <aside class="sidebar" aria-label="工具导航">
         <router-link to="/" class="brand" aria-label="AppClear 空间概览">
-          <span class="brand-symbol" aria-hidden="true"><Sparkles :size="23" :stroke-width="1.7" /></span>
+          <AppLogo :size="48" />
           <span class="brand-name">AppClear<small>本机清理助手</small></span>
         </router-link>
         <nav class="navigation">
