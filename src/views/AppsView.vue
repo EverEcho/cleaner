@@ -43,6 +43,20 @@ const currentEntry=computed(()=>queue.value[queueIndex.value]);
 const uninstallProgress=ref<UninstallProgress>({request_id:'',message:'',percentage:null});
 const selectedUninstallSize=computed(()=>formatBytes(currentEntry.value?.manual?.items.filter(i=>currentEntry.value?.paths.includes(i.path)).reduce((sum,i)=>sum+i.size_bytes,0)??null));
 let unlisten:UnlistenFn|undefined;let disposed=false;
+function discardQueue(scope: 'current' | 'all') {
+  if (uninstalling.value || planLoading.value) return;
+  if (scope === 'current') {
+    queue.value.splice(queueIndex.value, 1);
+  } else {
+    queue.value = [];
+  }
+  queueIndex.value = Math.max(0, Math.min(queueIndex.value, queue.value.length - 1));
+  if (!queue.value.length) {
+    uninstallDialog.value = false;
+    stopQueue.value = false;
+    uninstallProgress.value = { request_id: '', message: '', percentage: null };
+  }
+}
 function itemDisabled(entry:QueueItem,item:UninstallItem){return uninstalling.value||item.required||entry.completed.includes(item.path)||(item.kind!=='ide'&&item.owners?.some(owner=>!entry.paths.includes(owner)&&!entry.completed.includes(owner)));}
 function selectPlanItem(entry:QueueItem,item:UninstallItem,checked:boolean){
   if(itemDisabled(entry,item))return;
@@ -172,7 +186,20 @@ onDeactivated(()=>{uninstallDialog.value=false;profileDialog.value=false;});
           <template v-else-if="currentEntry.plan"><p class="uninstall-note">{{ currentEntry.plan.note }}</p><p class="uninstall-summary">{{ currentEntry.plan.mode==='simulation'?'原生仿真范围':currentEntry.plan.mode==='exact-scope'?'精确安装身份范围':'范围无法确认' }} · 预计移除 {{ currentEntry.plan.estimated_size }}</p><div class="uninstall-items"><div v-for="pkg in currentEntry.plan.packages" :key="pkg.name" class="uninstall-item"><div class="uninstall-item-copy"><strong>{{ pkg.name }}</strong><span>{{ pkg.version||'版本未知' }}</span></div><span class="uninstall-size">{{ formatBytes(pkg.size_bytes) }}</span></div></div></template>
         </template>
       </div>
-      <template #footer><el-button :disabled="uninstalling||planLoading" @click="uninstallDialog=false">关闭</el-button><el-button v-if="uninstalling" @click="stopQueue=true" :disabled="stopQueue">{{ stopQueue?'完成当前项后停止':'完成当前项后停止队列' }}</el-button><el-button v-if="queue.some(e=>e.status==='failed')" :disabled="uninstalling||planLoading" @click="executeQueue(true)">重试失败项</el-button><el-button type="danger" :loading="uninstalling" :disabled="!queue.some(e=>e.status==='pending')||planLoading" @click="executeQueue()">确认卸载 {{ queue.filter(e=>e.status==='pending').length }} 项</el-button></template>
+      <template #footer>
+        <div class="queue-footer">
+          <div class="queue-edit-actions">
+            <el-button link :disabled="!currentEntry || uninstalling || planLoading" @click="discardQueue('current')">移出当前项</el-button>
+            <el-button link :disabled="!queue.length || uninstalling || planLoading" @click="discardQueue('all')">清空队列</el-button>
+          </div>
+          <div class="queue-run-actions">
+            <el-button :disabled="uninstalling||planLoading" @click="uninstallDialog=false">关闭</el-button>
+            <el-button v-if="uninstalling" @click="stopQueue=true" :disabled="stopQueue">{{ stopQueue?'完成当前项后停止':'完成当前项后停止队列' }}</el-button>
+            <el-button v-if="queue.some(e=>e.status==='failed')" :disabled="uninstalling||planLoading" @click="executeQueue(true)">重试失败项</el-button>
+            <el-button type="danger" :loading="uninstalling" :disabled="!queue.some(e=>e.status==='pending')||planLoading" @click="executeQueue()">确认卸载 {{ queue.filter(e=>e.status==='pending').length }} 项</el-button>
+          </div>
+        </div>
+      </template>
     </el-dialog>
     <el-dialog v-model="profileDialog" :title="`${profile?.app.name??'应用'} · 详情与关联`" width="min(760px,calc(100vw - 40px))">
       <div v-loading="profileLoading" class="profile-body"><p v-if="profileError" class="coverage-warning">{{ profileError }}</p><template v-if="profile"><div class="profile-id"><Package :size="32"/><div><strong>{{ profile.app.name }}</strong><span>{{ profile.app.pkg_type.toUpperCase() }} · {{ profile.app.version||'版本未知' }} · {{ profile.app.size||'占用未知' }}</span></div></div><p class="profile-path">{{ profile.app.install_path||profile.app.key }}</p><p class="uninstall-note">{{ profile.app.description }}</p>
@@ -222,6 +249,10 @@ onDeactivated(()=>{uninstallDialog.value=false;profileDialog.value=false;});
 .uninstall-progress strong { font-weight: 500; color: var(--accent); }
 .uninstall-progress p { margin: 10px 0 0; font-size: 11px; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .uninstall-preview { min-height: 110px; }
+.queue-footer { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; }
+.queue-edit-actions, .queue-run-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.queue-run-actions { margin-left: auto; justify-content: flex-end; }
+.queue-footer :deep(.el-button + .el-button) { margin-left: 0; }
 .uninstall-note { color: var(--text-muted); font-size: 12px; line-height: 1.8; }
 .uninstall-summary { color: var(--accent); font-size: 13px; padding: 12px 14px; background: var(--accent-soft); border-radius: 8px; }
 .uninstall-items { max-height: 330px; overflow: auto; border: 1px solid var(--line); border-radius: 10px; }

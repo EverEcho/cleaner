@@ -153,7 +153,7 @@ fn exec_words(value: &str) -> Option<Vec<String>> {
     Some(words)
 }
 
-pub fn executable(exec: &str) -> Option<PathBuf> {
+pub(crate) fn exec_program(exec: &str) -> Option<String> {
     let words = exec_words(exec)?;
     let mut index = 0;
     if Path::new(words.first()?)
@@ -184,10 +184,15 @@ pub fn executable(exec: &str) -> Option<PathBuf> {
     if program.contains(['%', '$', '`', '=', '\n']) {
         return None;
     }
-    let path = if Path::new(program).is_absolute() {
+    Some(program.clone())
+}
+
+pub fn executable(exec: &str) -> Option<PathBuf> {
+    let program = exec_program(exec)?;
+    let path = if Path::new(&program).is_absolute() {
         PathBuf::from(program)
     } else {
-        platform::command_path(program)?
+        platform::command_path(&program)?
     };
     let path = fs::canonicalize(path).ok()?;
     #[cfg(unix)]
@@ -330,14 +335,147 @@ fn electron_info(root: &Path, binary: &Path) -> Option<Value> {
     {
         return None;
     }
-    // A checkout or wrapper script is not enough evidence for a distributable application.
+    is_elf(binary).then_some(product)
+}
+
+fn is_elf(binary: &Path) -> bool {
     use std::io::Read;
-    let mut magic = [0u8; 4];
-    fs::File::open(binary).ok()?.read_exact(&mut magic).ok()?;
-    if magic != *b"\x7fELF" {
+    let mut magic = [0; 4];
+    fs::File::open(binary)
+        .and_then(|mut file| file.read_exact(&mut magic))
+        .is_ok()
+        && magic == *b"\x7fELF"
+}
+
+fn directory_bundle_target(binary: &Path, home: &Path, launcher: &Path) -> Option<PathBuf> {
+    let bin = binary.parent()?;
+    let root = bin.parent()?;
+    if bin.file_name()? != "bin"
+        || !user_path(root, home)
+        || launcher.starts_with(root)
+        || root
+            .ancestors()
+            .take_while(|path| *path != home)
+            .any(project_directory)
+    {
         return None;
     }
-    Some(product)
+    for (variable, fallback) in [
+        ("XDG_DATA_HOME", ".local/share"),
+        ("XDG_CONFIG_HOME", ".config"),
+        ("XDG_CACHE_HOME", ".cache"),
+        ("XDG_STATE_HOME", ".local/state"),
+    ] {
+        let shared = platform::xdg_dir(variable, fallback).unwrap_or_else(|| home.join(fallback));
+        if shared.starts_with(root)
+            || fs::canonicalize(&shared).is_ok_and(|path| path.starts_with(root))
+        {
+            return None;
+        }
+    }
+    // Only accept a program-only bundle layout. Unknown top-level entries may be user data.
+    for entry in fs::read_dir(root).ok()? {
+        let entry = entry.ok()?;
+        let kind = entry.file_type().ok()?;
+        let name = entry.file_name();
+        let known = (kind.is_dir()
+            && matches!(
+                name.to_str()?,
+                "bin" | "lib" | "lib64" | "libexec" | "share"
+            ))
+            || (kind.is_file()
+                && matches!(
+                    Path::new(&name)
+                        .file_stem()?
+                        .to_str()?
+                        .to_ascii_lowercase()
+                        .as_str(),
+                    "license" | "licenses" | "copying" | "notice" | "readme"
+                ));
+        if !known {
+            return None;
+        }
+    }
+    for entry in fs::read_dir(root.join("share")).ok()? {
+        let entry = entry.ok()?;
+        if !entry.file_type().ok()?.is_dir()
+            || !matches!(
+                entry.file_name().to_str()?,
+                "applications"
+                    | "icons"
+                    | "metainfo"
+                    | "mime"
+                    | "doc"
+                    | "locale"
+                    | "man"
+                    | "licenses"
+            )
+        {
+            return None;
+        }
+    }
+    let manifest = root.join("share/applications").join(launcher.file_name()?);
+    if fs::canonicalize(&manifest).ok()? != manifest {
+        return None;
+    }
+    let desktop_text = |path: &Path| {
+        let metadata = path.metadata().ok()?;
+        if !metadata.is_file() || metadata.len() > 64 * 1024 {
+            return None;
+        }
+        fs::read_to_string(path).ok()
+    };
+    let packaged_text = desktop_text(&manifest)?;
+    let installed_text = desktop_text(launcher)?;
+    let packaged = desktop::fields(&packaged_text);
+    let installed = desktop::fields(&installed_text);
+    let command = exec_words(packaged.get("Exec")?)?;
+    let declared = Path::new(command.first()?);
+    let matches_binary = declared.as_os_str() == binary.file_name()?
+        || binary
+            .strip_prefix(root)
+            .is_ok_and(|relative| declared == relative)
+        || declared == binary;
+    if packaged.get("Type") != Some(&"Application")
+        || packaged.get("Name")? != installed.get("Name")?
+        || !matches_binary
+        || executable(installed.get("Exec")?).as_deref() != Some(binary)
+        || !is_elf(binary)
+    {
+        return None;
+    }
+    let icon_name = packaged.get("Icon")?;
+    let icon = Path::new(installed.get("Icon")?);
+    let icons = root.join("share/icons");
+    if icon.is_absolute() {
+        let icon = fs::canonicalize(icon).ok()?;
+        if !icon.starts_with(&icons) || !icon.is_file() || icon.file_stem()? != *icon_name {
+            return None;
+        }
+    } else if icon.as_os_str() != *icon_name
+        || !WalkDir::new(&icons)
+            .max_depth(5)
+            .into_iter()
+            .flatten()
+            .any(|entry| {
+                entry.file_type().is_file()
+                    && entry
+                        .path()
+                        .file_stem()
+                        .is_some_and(|stem| stem == *icon_name)
+            })
+    {
+        return None;
+    }
+    Some(root.to_path_buf())
+}
+
+fn launcher_target(binary: &Path, home: &Path, launcher: &Path) -> (Option<PathBuf>, bool) {
+    let (target, toolbox) = target_for(binary, home);
+    (
+        target.or_else(|| directory_bundle_target(binary, home, launcher)),
+        toolbox,
+    )
 }
 
 fn target_for(binary: &Path, home: &Path) -> (Option<PathBuf>, bool) {
@@ -415,7 +553,7 @@ pub fn discover_controlled(
         if !seen.insert(binary.clone()) {
             continue;
         }
-        let (target, toolbox) = target_for(&binary, &home);
+        let (target, toolbox) = launcher_target(&binary, &home, &launcher.path);
         let size = target.as_ref().and_then(|path| {
             let mut bytes = 0;
             let mut known = true;
@@ -738,6 +876,7 @@ fn scoped_links(
     items: &mut Vec<UninstallItem>,
     home: &Path,
     targets: &[PathBuf],
+    program: &Path,
 ) -> Result<(), String> {
     let mut roots = launcher_roots();
     roots.push(
@@ -770,6 +909,19 @@ fn scoped_links(
                     },
                     false,
                 )?;
+            }
+        }
+    }
+    for root in [home.join(".local/bin"), home.join("bin")] {
+        let Ok(entries) = fs::read_dir(root) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if entry.file_type().is_ok_and(|kind| kind.is_symlink())
+                && fs::canonicalize(&path).is_ok_and(|resolved| resolved == program)
+            {
+                append(items, home, &path, "命令行启动链接", "script", false)?;
             }
         }
     }
@@ -1003,7 +1155,7 @@ pub fn plan(key: &str) -> Result<UninstallPlan, String> {
     {
         return Err("启动入口已改变，请刷新应用列表".into());
     }
-    let current = target_for(&app.executable, &home);
+    let current = launcher_target(&app.executable, &home, Path::new(key));
     if current.0.as_ref() != Some(target) || current.1 != app.toolbox {
         return Err("应用安装结构已改变，请刷新应用列表后再查看卸载详情".into());
     }
@@ -1130,7 +1282,7 @@ pub fn plan(key: &str) -> Result<UninstallPlan, String> {
         append_empty(&mut items, &home, application_root)?;
         append_empty(&mut items, &home, &data)?;
     }
-    scoped_links(&mut items, &home, &targets)?;
+    scoped_links(&mut items, &home, &targets, &app.executable)?;
     // Required original launcher, even if duplicates point at the same program.
     append(
         &mut items,
@@ -1590,6 +1742,47 @@ exit 0
             &serde_json::json!({"name":"Test IDE","main":"../../../project/main.js"}).to_string(),
         );
         assert_eq!(target_for(&binary, &f.0), (None, false));
+    }
+    #[test]
+    fn local_bundle_scope_requires_matching_packaged_entry_and_program_only_layout() {
+        let fixture = Fixture::new();
+        let binary = fixture.binary("opt/editor-release-1/bin/editor");
+        fs::write(&binary, b"\x7fELFfixture").unwrap();
+        let root = fixture.0.join("opt/editor-release-1");
+        fixture.file(
+            "opt/editor-release-1/share/icons/hicolor/64x64/apps/org.example.Editor.png",
+            "icon",
+        );
+        let manifest = fixture.file(
+            "opt/editor-release-1/share/applications/org.example.Editor.desktop",
+            "[Desktop Entry]\nType=Application\nName=Editor\nExec=bin/editor %U\nIcon=org.example.Editor\n",
+        );
+        let launcher = fixture.file(
+            ".local/share/applications/org.example.Editor.desktop",
+            &format!(
+                "[Desktop Entry]\nType=Application\nName=Editor\nExec=\"{}\" %U\nIcon=org.example.Editor\n",
+                binary.display()
+            ),
+        );
+        assert_eq!(
+            launcher_target(&binary, &fixture.0, &launcher),
+            (Some(root), false)
+        );
+        let data = fixture.file("opt/editor-release-1/data/user.txt", "user data");
+        assert_eq!(
+            launcher_target(&binary, &fixture.0, &launcher),
+            (None, false)
+        );
+        fs::remove_dir_all(data.parent().unwrap()).unwrap();
+        fs::write(
+            &manifest,
+            "[Desktop Entry]\nType=Application\nName=Editor\nExec=other %U\nIcon=editor\n",
+        )
+        .unwrap();
+        assert_eq!(
+            launcher_target(&binary, &fixture.0, &launcher),
+            (None, false)
+        );
     }
     #[test]
     fn custom_toolbox_records_require_ide_metadata_and_keep_project_code() {
