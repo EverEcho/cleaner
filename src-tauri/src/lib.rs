@@ -12,6 +12,7 @@ pub mod icons;
 #[path = "macos/mod.rs"]
 mod macos_tests;
 pub mod manual_apps;
+mod market;
 pub mod models;
 pub mod monitor;
 pub mod native_update_plan;
@@ -104,6 +105,37 @@ fn get_platform_info() -> platform::PlatformInfo {
     platform::info()
 }
 #[tauri::command]
+async fn fetch_market_index() -> Result<market::IndexReport, String> {
+    tauri::async_runtime::spawn_blocking(market::refresh_index)
+        .await
+        .map_err(|error| error.to_string())?
+}
+#[tauri::command]
+async fn get_market_environment() -> Result<market::Environment, String> {
+    tauri::async_runtime::spawn_blocking(market::environment)
+        .await
+        .map_err(|error| error.to_string())
+}
+#[tauri::command]
+async fn install_market_app(
+    app: AppHandle,
+    id: String,
+    package: String,
+    task_id: Option<String>,
+) -> Result<String, String> {
+    tracked(app, "install_market_app", task_id, move |task| {
+        let result = market::install(&id, &package, |phase| {
+            task.progress(phase, 0, None, Some(&package))
+        });
+        match &result {
+            Ok(message) => task.finish("completed", message),
+            Err(error) => task.finish("failed", error),
+        }
+        result
+    })
+    .await
+}
+#[tauri::command]
 fn get_tasks() -> Vec<tasks::TaskSnapshot> {
     tasks::list()
 }
@@ -123,7 +155,7 @@ fn save_preferences(
     let saved = preferences::save(&app, preferences)?;
     app.emit("preferences-changed", &saved)
         .map_err(|e| e.to_string())?;
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     tray::update(&app, &saved)?;
     Ok(saved)
 }
@@ -142,11 +174,11 @@ async fn get_monitor_snapshot(app: AppHandle) -> Result<monitor::MonitorSnapshot
 }
 #[tauri::command]
 fn open_main_page(app: AppHandle, route: String) -> Result<(), String> {
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     {
         tray::open_main(&app, &route)
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     {
         let _ = (app, route);
         Err("当前系统不支持菜单栏面板".into())
@@ -154,9 +186,9 @@ fn open_main_page(app: AppHandle, route: String) -> Result<(), String> {
 }
 #[tauri::command]
 fn hide_tray_panel(app: AppHandle) {
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     tray::hide(&app);
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     let _ = app;
 }
 #[tauri::command]
@@ -165,10 +197,15 @@ fn quit_app(app: AppHandle) {
 }
 #[tauri::command]
 fn show_tray_panel(app: AppHandle) -> Result<(), String> {
-    #[cfg(target_os = "macos")]
-    { tray::show_panel(&app) }
-    #[cfg(not(target_os = "macos"))]
-    { let _ = app; Err("当前系统不支持菜单栏面板".into()) }
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    {
+        tray::show_panel(&app)
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    {
+        let _ = app;
+        Err("当前系统不支持菜单栏面板".into())
+    }
 }
 #[tauri::command]
 fn get_storage_roots() -> Vec<String> {
@@ -451,12 +488,13 @@ async fn trash_files(
     tracked(app, "trash_files", task_id, move |task| {
         task.progress("复核文件与有效保留副本", 0, None, None);
         let excluded = preferences::load(&settings)?.exclusions;
-        let result = cleaner::trash_scanned_files_controlled(
-            paths,
-            &kind,
-            &excluded,
-            |path, done, total| task.progress("移入废纸篓", done, Some(total), Some(path)),
-        )?;
+        let progress =
+            |path: &str, done, total| task.progress("移入废纸篓", done, Some(total), Some(path));
+        let result = if kind == "storage" {
+            storage::trash_analyzed(paths, &excluded, progress)?
+        } else {
+            cleaner::trash_scanned_files_controlled(paths, &kind, &excluded, progress)?
+        };
         task.finish(
             if result.failed > 0 {
                 "failed"
@@ -564,14 +602,17 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
-            #[cfg(target_os = "macos")]
+            #[cfg(any(target_os = "macos", target_os = "linux"))]
             tray::setup(app)?;
-            #[cfg(not(target_os = "macos"))]
+            #[cfg(not(any(target_os = "macos", target_os = "linux")))]
             let _ = app;
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             get_platform_info,
+            fetch_market_index,
+            get_market_environment,
+            install_market_app,
             get_tasks,
             cancel_task,
             get_preferences,

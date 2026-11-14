@@ -47,6 +47,7 @@ fn mutation(kind: &str) -> bool {
             | "uninstall_manual_app"
             | "upgrade_software"
             | "upgrade_tool"
+            | "install_market_app"
             | "refresh_software_sources"
     )
 }

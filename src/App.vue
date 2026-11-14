@@ -2,7 +2,7 @@
 import { computed, onMounted, onUnmounted } from 'vue';
 import { isTauri } from '@tauri-apps/api/core';
 import { ElMessage } from 'element-plus';
-import { Sparkles, Trash2, HardDrive, AppWindow, ArrowUpCircle, Power, PanelsTopLeft, Files, Copy, Monitor, ChevronRight,Activity } from 'lucide-vue-next';
+import { Sparkles, Trash2, HardDrive, AppWindow, ArrowUpCircle, Power, PanelsTopLeft, Files, Copy, Monitor, ChevronRight,Activity, Store } from 'lucide-vue-next';
 import WindowBar from './layout/WindowBar.vue';
 import AppLogo from './components/AppLogo.vue';
 import { listen } from '@tauri-apps/api/event';
@@ -25,6 +25,7 @@ const groups = [
   ] },
   { label: '应用与系统', items: [
     { path: '/apps', label: '应用管理', icon: AppWindow },
+    { path: '/market', label: '应用市场', icon: Store },
     { path: '/updates', label: '软件更新', icon: ArrowUpCircle },
     { path: '/autostart', label: '启动项', icon: Power },
     { path: '/entries', label: '应用入口', icon: PanelsTopLeft },
@@ -70,7 +71,7 @@ onUnmounted(()=>{disposed=true;stops.forEach(stop=>stop());disposeTasks();stopMo
       <div class="page-body">
         <router-view v-slot="{ Component }">
           <Transition name="page" mode="out-in">
-            <KeepAlive :max="10"><component :is="Component" /></KeepAlive>
+            <KeepAlive :max="11"><component :is="Component" /></KeepAlive>
           </Transition>
         </router-view>
       </div>

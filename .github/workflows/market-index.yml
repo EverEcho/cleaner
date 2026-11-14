@@ -1,0 +1,74 @@
+name: App market index
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/market-index.yml'
+      - 'market/catalog.json'
+      - 'scripts/build-market-index.mjs'
+      - 'src/market-index.ts'
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/market-index.yml'
+      - 'market/catalog.json'
+      - 'scripts/build-market-index.mjs'
+      - 'src/market-index.ts'
+  schedule:
+    - cron: '23 2 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: node scripts/build-market-index.mjs --check
+
+  publish:
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    concurrency:
+      group: publish-market-index
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Validate catalog and sync stable releases
+        run: node scripts/build-market-index.mjs --output "$RUNNER_TEMP/market-index.json"
+      - name: Publish the updated index
+        shell: bash
+        run: |
+          published_ref=$(git ls-remote --heads origin refs/heads/market-index)
+          if [[ -n "$published_ref" ]]; then
+            git fetch --no-tags --depth=1 origin refs/heads/market-index
+            git switch --detach FETCH_HEAD
+          else
+            git switch --orphan market-index
+          fi
+          cp "$RUNNER_TEMP/market-index.json" index.json
+          git add index.json
+          if git diff --cached --quiet; then
+            echo "Index is up to date."
+            exit 0
+          fi
+          git -c user.name='github-actions[bot]' \
+              -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+              commit -m 'Update app market index'
+          git push origin HEAD:refs/heads/market-index

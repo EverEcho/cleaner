@@ -1,0 +1,248 @@
+{
+  "schema_version": 1,
+  "apps": [
+    {
+      "id": "vscode",
+      "name": "Visual Studio Code",
+      "category": "development",
+      "description": "微软的代码编辑器，支持扩展、调试和远程开发。",
+      "install": {
+        "linux": "com.visualstudio.code",
+        "macos": "visual-studio-code"
+      }
+    },
+    {
+      "id": "cursor",
+      "name": "Cursor",
+      "category": "development",
+      "description": "集成 AI 对话、代码补全和多文件编辑的代码编辑器。",
+      "install": {
+        "macos": "cursor"
+      }
+    },
+    {
+      "id": "zed",
+      "name": "Zed",
+      "category": "development",
+      "description": "面向协作开发的代码编辑器，提供语言服务和 AI 辅助。",
+      "install": {
+        "linux": "dev.zed.Zed",
+        "macos": "zed"
+      },
+      "release_repo": "zed-industries/zed"
+    },
+    {
+      "id": "dbeaver",
+      "name": "DBeaver Community",
+      "category": "development",
+      "description": "支持多种关系数据库的客户端，提供 SQL 编辑和数据浏览。",
+      "install": {
+        "linux": "io.dbeaver.DBeaverCommunity",
+        "macos": "dbeaver-community"
+      },
+      "release_repo": "dbeaver/dbeaver"
+    },
+    {
+      "id": "postman",
+      "name": "Postman",
+      "category": "development",
+      "description": "构建、调试和协作维护 API 请求与测试。",
+      "install": {
+        "linux": "com.getpostman.Postman",
+        "macos": "postman"
+      }
+    },
+    {
+      "id": "chrome",
+      "name": "Google Chrome",
+      "category": "browsers",
+      "description": "Google 浏览器，支持跨设备同步和网页开发者工具。",
+      "install": {
+        "linux": "com.google.Chrome",
+        "macos": "google-chrome"
+      }
+    },
+    {
+      "id": "firefox",
+      "name": "Mozilla Firefox",
+      "category": "browsers",
+      "description": "Mozilla 的开源浏览器，支持扩展和跟踪保护。",
+      "install": {
+        "linux": "org.mozilla.firefox",
+        "macos": "firefox"
+      }
+    },
+    {
+      "id": "brave",
+      "name": "Brave",
+      "category": "browsers",
+      "description": "带有广告与跟踪拦截功能的 Chromium 浏览器。",
+      "install": {
+        "linux": "com.brave.Browser",
+        "macos": "brave-browser"
+      },
+      "release_repo": "brave/brave-browser"
+    },
+    {
+      "id": "obsidian",
+      "name": "Obsidian",
+      "category": "productivity",
+      "description": "基于本地 Markdown 文件和双向链接的笔记工具。",
+      "install": {
+        "linux": "md.obsidian.Obsidian",
+        "macos": "obsidian"
+      }
+    },
+    {
+      "id": "notion",
+      "name": "Notion",
+      "category": "productivity",
+      "description": "把文档、知识库和项目协作放在同一个工作空间。",
+      "install": {
+        "macos": "notion"
+      }
+    },
+    {
+      "id": "wps",
+      "name": "WPS Office",
+      "category": "productivity",
+      "description": "用于编辑文字、表格和演示文档的办公套件。",
+      "install": {
+        "linux": "com.wps.Office",
+        "macos": "wpsoffice"
+      }
+    },
+    {
+      "id": "wechat",
+      "name": "微信",
+      "category": "communication",
+      "description": "用于聊天、文件传输和音视频通话的微信桌面版。",
+      "install": {
+        "linux": "com.tencent.WeChat",
+        "macos": "wechat"
+      }
+    },
+    {
+      "id": "telegram",
+      "name": "Telegram Desktop",
+      "category": "communication",
+      "description": "Telegram 的跨平台桌面客户端，支持聊天和文件同步。",
+      "install": {
+        "linux": "org.telegram.desktop",
+        "macos": "telegram-desktop"
+      },
+      "release_repo": "telegramdesktop/tdesktop"
+    },
+    {
+      "id": "slack",
+      "name": "Slack",
+      "category": "communication",
+      "description": "以频道组织团队消息、文件和工作流。",
+      "install": {
+        "linux": "com.slack.Slack",
+        "macos": "slack"
+      }
+    },
+    {
+      "id": "discord",
+      "name": "Discord",
+      "category": "communication",
+      "description": "面向社区的文字、语音和视频通信工具。",
+      "install": {
+        "linux": "com.discordapp.Discord",
+        "macos": "discord"
+      }
+    },
+    {
+      "id": "feishu",
+      "name": "飞书",
+      "category": "communication",
+      "description": "集成即时消息、会议、日历和文档的协作工具。",
+      "install": {
+        "macos": "feishu"
+      }
+    },
+    {
+      "id": "vlc",
+      "name": "VLC",
+      "category": "media",
+      "description": "VideoLAN 的开源播放器，支持多种音视频与流媒体格式。",
+      "install": {
+        "linux": "org.videolan.VLC",
+        "macos": "vlc"
+      }
+    },
+    {
+      "id": "obs-studio",
+      "name": "OBS Studio",
+      "category": "media",
+      "description": "用于录屏和直播的开源工具，支持场景与音频混合。",
+      "install": {
+        "linux": "com.obsproject.Studio",
+        "macos": "obs"
+      },
+      "release_repo": "obsproject/obs-studio"
+    },
+    {
+      "id": "handbrake",
+      "name": "HandBrake",
+      "category": "media",
+      "description": "开源视频转码工具，提供编码预设和批量处理。",
+      "install": {
+        "linux": "fr.handbrake.ghb",
+        "macos": "handbrake-app"
+      },
+      "release_repo": "HandBrake/HandBrake"
+    },
+    {
+      "id": "blender",
+      "name": "Blender",
+      "category": "media",
+      "description": "开源 3D 创作套件，涵盖建模、动画和渲染。",
+      "install": {
+        "linux": "org.blender.Blender"
+      }
+    },
+    {
+      "id": "iina",
+      "name": "IINA",
+      "category": "media",
+      "description": "基于 mpv 的开源 macOS 音视频播放器。",
+      "install": {
+        "macos": "iina"
+      },
+      "release_repo": "iina/iina"
+    },
+    {
+      "id": "keepassxc",
+      "name": "KeePassXC",
+      "category": "security",
+      "description": "在本地加密数据库中管理密码、通行密钥和验证码。",
+      "install": {
+        "linux": "org.keepassxc.KeePassXC",
+        "macos": "keepassxc"
+      },
+      "release_repo": "keepassxreboot/keepassxc"
+    },
+    {
+      "id": "bitwarden",
+      "name": "Bitwarden",
+      "category": "security",
+      "description": "支持跨设备同步和团队共享的密码管理器。",
+      "install": {
+        "linux": "com.bitwarden.desktop",
+        "macos": "bitwarden"
+      }
+    },
+    {
+      "id": "1password",
+      "name": "1Password",
+      "category": "security",
+      "description": "用于保存密码、通行密钥和其他敏感资料的密码管理器。",
+      "install": {
+        "linux": "com.onepassword.OnePassword",
+        "macos": "1password"
+      }
+    }
+  ]
+}

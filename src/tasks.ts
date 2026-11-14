@@ -5,7 +5,7 @@ import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 export interface TaskSnapshot { id: string; kind: string; state: 'running'|'cancelling'|'completed'|'cancelled'|'failed'; phase: string; current: number; total: number|null; path: string; started_at: number; updated_at: number; cancellable: boolean }
 export const taskList = ref<TaskSnapshot[]>([]);
 export const taskResults = ref<Record<string,{at:number;summary:string}>>({});
-export const taskLabels: Record<string,string> = { scan_junk:'垃圾扫描', scan_developer_junk:'项目扫描', scan_large_files:'大文件扫描', scan_duplicate_files:'重复文件比对', analyze_disk:'目录分析', get_installed_apps_report:'应用扫描', clean_items:'清理文件',trash_files:'移入废纸篓',uninstall_app_plan:'卸载应用',uninstall_manual_app:'卸载独立应用',upgrade_software:'软件升级',upgrade_tool:'工具升级',check_software_updates:'检查更新',refresh_software_sources:'刷新软件源' };
+export const taskLabels: Record<string,string> = { scan_junk:'垃圾扫描', scan_developer_junk:'项目扫描', scan_large_files:'大文件扫描', scan_duplicate_files:'重复文件比对', analyze_disk:'目录分析', get_installed_apps_report:'应用扫描', clean_items:'清理文件',trash_files:'移入废纸篓',uninstall_app_plan:'卸载应用',uninstall_manual_app:'卸载独立应用',upgrade_software:'软件升级',upgrade_tool:'工具升级',install_market_app:'市场应用安装',check_software_updates:'检查更新',refresh_software_sources:'刷新软件源' };
 let unlisten: UnlistenFn|undefined;
 let initializing: Promise<void>|undefined;
 function terminal(state: TaskSnapshot['state']) { return ['completed', 'failed', 'cancelled'].includes(state); }

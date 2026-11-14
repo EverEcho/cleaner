@@ -23,6 +23,12 @@ const routes = [
     meta: { title: '应用强力卸载' },
   },
   {
+    path: '/market',
+    name: 'Market',
+    component: () => import('../views/MarketView.vue'),
+    meta: { title: '应用市场' },
+  },
+  {
     path: '/autostart',
     name: 'Autostart',
     component: () => import('../views/AutostartView.vue'),
