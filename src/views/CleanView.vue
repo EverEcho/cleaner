@@ -4,7 +4,7 @@ import { useRoute, useRouter } from 'vue-router';
 import { invoke, isTauri } from '@tauri-apps/api/core';
 import { revealItemInDir } from '@tauri-apps/plugin-opener';
 import { ElMessage, ElMessageBox } from 'element-plus';
-import { ChevronDown, ChevronUp, Folder, File, Search, Copy, Settings, Blocks, Globe, Container, Braces, ShieldCheck, Sparkles, Monitor, HardDrive } from 'lucide-vue-next';
+import { ChevronDown, ChevronUp, Folder, File, Search, Copy, Settings, Blocks, Globe, Container, Braces, ShieldCheck, Sparkles, Monitor, HardDrive, Power } from 'lucide-vue-next';
 import { platformInfo, loadPlatform } from '../platform';
 import PageHeader from '../layout/PageHeader.vue';
 import SummaryDetails from '../components/SummaryDetails.vue';
@@ -61,7 +61,7 @@ async function scanDeveloper() {
   finally { developerScanning.value = false; }
 }
 const selected = ref<string[]>([]);
-const expandedGroups = ref(new Set(['system','applications','browser','docker','developer']));
+const expandedGroups = ref(new Set(['system','applications','stale_autostart','browser','docker','developer']));
 const expandedItems = ref(new Set<string>());
 const loadingDetails = ref(new Set<string>());
 const loadedDetails = ref(new Set<string>());
@@ -89,6 +89,7 @@ const selectedSet = computed(() => new Set(selected.value));
 const groups = computed(() => [
   { id: 'system', title: '系统垃圾', icon: Settings, cats: ['apt','journal','tmp','trash','system'] },
   { id: 'applications', title: '应用垃圾', icon: Blocks, cats: ['app_cache','logs'] },
+  { id: 'stale_autostart', title: '失效启动项', icon: Power, cats: ['stale_autostart'] },
   { id: 'developer', title: '开发者垃圾', icon: Braces, cats: ['developer'] },
   { id: 'browser', title: '上网垃圾', icon: Globe, cats: ['browser_cache'] },
   { id: 'docker', title: '容器垃圾', icon: Container, cats: ['docker'] },
@@ -96,6 +97,9 @@ const groups = computed(() => [
 const hasScanItems = computed(() => categories.value.some(category => category.items.length > 0));
 const totalBytes = computed(() => categories.value.reduce((sum, cat) => sum + cat.total_size_bytes, 0));
 const selectedBytes = computed(() => categories.value.flatMap(cat => cat.items).reduce((sum, item) => sum + itemSelectedBytes(item), 0));
+const selectedStartupCount = computed(() => categories.value
+  .find(category => category.id === 'stale_autostart')
+  ?.items.filter(item => selectedSet.value.has(item.path)).length ?? 0);
 const hasScanFailures = computed(() => categories.value.some(cat => cat.warning || cat.items.some(item => !item.size_known)));
 const selectedDetails = computed(() => categories.value.flatMap(cat => cat.items).flatMap(item => isDeveloperGroup(item) ? item.files.filter(file => fileSelected(item, file)) : selectedSet.value.has(item.path) ? [item] : []));
 const allItems = computed(() => categories.value.flatMap(cat => cat.items).filter(item => item.can_delete));
@@ -207,8 +211,15 @@ async function clean() {
     await refreshKeptScopes();
     if (!selected.value.length) { ElMessage.warning('所选项目已在保留名单中，没有需要清理的内容'); return; }
     const scope = allItems.value.filter(item => item.action && selectedSet.value.has(item.path)).map(item => `${item.name}：${item.reason}`).join('\n');
+    const startupCount = selectedStartupCount.value;
+    const confirmation = [
+      `清理所选 ${selected.value.length} 项？`,
+      startupCount ? `${startupCount} 个失效启动项将移入废纸篓。` : '',
+      selected.value.length > startupCount ? '缓存和系统清理无法撤销。' : '',
+      scope,
+    ].filter(Boolean).join('\n');
     await Promise.race([
-      ElMessageBox.confirm(`清理所选 ${selected.value.length} 项？缓存和系统清理无法撤销。${scope ? '\n' + scope : ''}`, '确认清理', { type: 'warning', confirmButtonText: '立即清理', cancelButtonText: '取消' }),
+      ElMessageBox.confirm(confirmation, '确认清理', { type: 'warning', confirmButtonText: '立即清理', cancelButtonText: '取消' }),
       new Promise<never>((_, reject) => { cancelConfirmation = () => reject('cancel'); }),
     ]);
     cancelConfirmation = undefined;
@@ -270,7 +281,7 @@ onDeactivated(() => {
           <div class="overview-symbol"><HardDrive :size="29" /><span /></div>
           <div class="overview-copy">
             <h2>{{ scanError ? '扫描未完成' : scanning ? '正在扫描…' : loaded ? size(totalBytes) : '尚未扫描' }}</h2>
-            <p>{{ scanning ? '完成后选择要清理的项目' : loaded ? '扫描时逻辑大小 · 实际释放空间可能不同' : '扫描本机缓存，完成后选择要清理的项目。' }}<span v-if="!scanning && hasScanFailures" class="scan-failure"> · 部分项目待核对</span></p>
+            <p>{{ scanning ? '完成后选择要清理的项目' : loaded ? '扫描时逻辑大小 · 实际释放空间可能不同' : '扫描本机，查看可清理的项目。' }}<span v-if="!scanning && hasScanFailures" class="scan-failure"> · 部分项目待核对</span></p>
           </div>
           <div class="overview-tools">
             <span class="overview-status"><ShieldCheck :size="14" />先确认，再清理</span>
@@ -290,7 +301,7 @@ onDeactivated(() => {
         <div class="clean-list" :aria-busy="scanning">
 
           <div v-if="scanning && !groups.length" class="scan-state"><ScanningRadar title="正在探索你的磁盘" :sub-title="task?.path || '准备扫描…'" :tips="[]"><ScanAction initial :scanning="true" :task="task" :hint="`已检查 ${task?.current || 0} 个文件`" /></ScanningRadar></div>
-          <div v-if="!scanning && !loaded && !scanError" class="clean-empty"><Sparkles :size="35" /><h3>先扫描，再选择清理</h3><p>扫描本机缓存，完成后选择要清理的项目。</p><ScanAction initial :scanning="false" :disabled="cleaning || authorizing || developerScanning" label="开始扫描" @start="scan" /></div>
+          <div v-if="!scanning && !loaded && !scanError" class="clean-empty"><Sparkles :size="35" /><h3>先扫描，再选择清理</h3><p>扫描完成后，勾选要清理的项目。</p><ScanAction initial :scanning="false" :disabled="cleaning || authorizing || developerScanning" label="开始扫描" @start="scan" /></div>
           <div v-if="!scanning && scanError" class="clean-empty"><Sparkles :size="35" /><h3>扫描未完成</h3><p>请查看上方提示后重试扫描。</p></div>
           <div v-if="loaded && !scanning && !scanError && !groups.length" class="clean-empty"><Sparkles :size="35" /><h3>{{ hasScanItems ? '没有匹配的项目' : hasScanFailures ? '扫描只覆盖了部分范围' : '空间已经很轻盈' }}</h3><p>{{ hasScanItems ? '尝试其他名称或路径。' : hasScanFailures ? '已读取范围内没有可清理项目，请查看覆盖提示后继续扫描。' : '本次扫描没有发现可清理的文件。' }}</p></div>
           <section v-for="group in groups" :key="group.id" class="clean-group">
@@ -317,7 +328,7 @@ onDeactivated(() => {
         </div>
       </template>
     </div>
-    <footer v-if="desktopAvailable && !scanning && selected.length" class="clean-action-bar"><div class="selection-copy"><span class="selection-icon"><Sparkles :size="19" /></span><div><strong>{{ size(selectedBytes) }} <small>预计可回收</small></strong><p>已选择 {{ selected.length }} 项 · 扫描时逻辑大小</p></div></div><button class="quiet-button" @click="selectionDialog = true">查看已选</button><button class="primary-clean" :disabled="!selected.length || cleaning || authorizing || developerScanning" @click="clean"><Sparkles :size="17" />{{ cleaning ? '正在清理…' : '清理所选' }}</button></footer>
+    <footer v-if="desktopAvailable && !scanning && selected.length" class="clean-action-bar"><div class="selection-copy"><span class="selection-icon"><Sparkles :size="19" /></span><div><strong>{{ size(selectedBytes) }} <small>{{ selectedStartupCount ? '所选项目大小' : '预计可回收' }}</small></strong><p>已选择 {{ selected.length }} 项 · 扫描时逻辑大小</p></div></div><button class="quiet-button" @click="selectionDialog = true">查看已选</button><button class="primary-clean" :disabled="!selected.length || cleaning || authorizing || developerScanning" @click="clean"><Sparkles :size="17" />{{ cleaning ? '正在清理…' : '清理所选' }}</button></footer>
     <el-dialog v-model="exclusionsDialog" title="保留名单" width="min(680px, calc(100vw - 40px))">
       <div class="scan-details-body"><ScanScope embedded exclusions-only :disabled="scanning || cleaning || developerScanning" /></div>
       <template #footer><el-button @click="exclusionsDialog = false">关闭</el-button></template>

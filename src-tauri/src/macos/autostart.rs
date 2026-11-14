@@ -89,6 +89,7 @@ pub fn scan_autostart_items() -> Vec<AutostartItem> {
                     .into(),
                     enabled,
                     is_user,
+                    missing_program: None,
                 });
             }
         }

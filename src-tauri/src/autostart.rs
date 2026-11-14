@@ -1,14 +1,15 @@
 use crate::{desktop, models::AutostartItem, platform};
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     fs,
+    io::ErrorKind,
     path::{Path, PathBuf},
 };
 
 fn roots() -> Vec<(PathBuf, bool)> {
     let mut roots = Vec::new();
-    if let Some(config) = platform::xdg_dir("XDG_CONFIG_HOME", ".config") {
-        roots.push((config.join("autostart"), true));
+    if let Some(user) = user_root() {
+        roots.push((user, true));
     }
     let config_dirs = std::env::var_os("XDG_CONFIG_DIRS").unwrap_or_else(|| "/etc/xdg".into());
     roots.extend(
@@ -17,6 +18,99 @@ fn roots() -> Vec<(PathBuf, bool)> {
             .map(|p| (p.join("autostart"), false)),
     );
     roots
+}
+
+pub(crate) fn user_root() -> Option<PathBuf> {
+    platform::xdg_dir("XDG_CONFIG_HOME", ".config").map(|config| config.join("autostart"))
+}
+
+fn is_missing_absolute(program: &str) -> bool {
+    let path = Path::new(program);
+    path.is_absolute() && fs::metadata(path).is_err_and(|error| error.kind() == ErrorKind::NotFound)
+}
+
+fn missing_program(fields: &HashMap<&str, &str>) -> Option<String> {
+    let exec = fields
+        .get("Exec")
+        .and_then(|exec| crate::manual_apps::exec_program(exec));
+    exec.as_deref()
+        .into_iter()
+        .chain(fields.get("TryExec").copied())
+        .find(|program| is_missing_absolute(program))
+        .map(str::to_owned)
+}
+
+#[cfg(target_os = "linux")]
+#[derive(Clone, PartialEq, Eq)]
+pub(crate) struct StaleUserEntry {
+    pub path: PathBuf,
+    pub canonical: PathBuf,
+    pub name: String,
+    pub program: String,
+    content: String,
+}
+
+#[cfg(target_os = "linux")]
+impl StaleUserEntry {
+    pub fn size(&self) -> u64 {
+        self.content.len() as u64
+    }
+
+    pub fn still_matches(&self) -> bool {
+        stale_user_entry(&self.path).as_ref() == Some(self)
+    }
+}
+
+#[cfg(target_os = "linux")]
+pub(crate) fn stale_user_entry(path: &Path) -> Option<StaleUserEntry> {
+    use std::io::Read;
+
+    let user = user_root()?;
+    let filename = path.file_name()?;
+    if path.parent() != Some(user.as_path()) || path.extension()? != "desktop" {
+        return None;
+    }
+    // A user entry can override a system entry with the same basename.
+    if roots().into_iter().any(|(root, is_user)| {
+        !is_user
+            && !fs::symlink_metadata(root.join(filename))
+                .is_err_and(|error| error.kind() == ErrorKind::NotFound)
+    }) {
+        return None;
+    }
+    const MAX_ENTRY_BYTES: u64 = 128 * 1024;
+    let metadata = fs::symlink_metadata(path).ok()?;
+    if !metadata.is_file() || metadata.len() > MAX_ENTRY_BYTES {
+        return None;
+    }
+    let mut content = String::new();
+    fs::File::open(path)
+        .ok()?
+        .take(MAX_ENTRY_BYTES + 1)
+        .read_to_string(&mut content)
+        .ok()?;
+    let fields = desktop::fields(&content);
+    if content.len() as u64 > MAX_ENTRY_BYTES
+        || fields.get("Type") != Some(&"Application")
+        || fields.get("DBusActivatable") == Some(&"true")
+    {
+        return None;
+    }
+    let program = crate::manual_apps::exec_program(fields.get("Exec")?)?;
+    if !is_missing_absolute(&program) {
+        return None;
+    }
+    Some(StaleUserEntry {
+        path: path.to_path_buf(),
+        canonical: fs::canonicalize(path).ok()?,
+        name: fields
+            .get("Name")
+            .copied()
+            .unwrap_or(filename.to_str()?)
+            .into(),
+        program,
+        content,
+    })
 }
 
 pub fn scan_autostart_items() -> Vec<AutostartItem> {
@@ -44,6 +138,7 @@ pub fn scan_autostart_items() -> Vec<AutostartItem> {
                     enabled: fields.get("Hidden") != Some(&"true")
                         && fields.get("X-GNOME-Autostart-enabled") != Some(&"false"),
                     is_user,
+                    missing_program: missing_program(&fields),
                 });
             }
         }
@@ -53,9 +148,7 @@ pub fn scan_autostart_items() -> Vec<AutostartItem> {
 }
 
 pub fn toggle_autostart(path: &str, enable: bool) -> Result<String, String> {
-    let user = platform::xdg_dir("XDG_CONFIG_HOME", ".config")
-        .ok_or("无法识别用户目录")?
-        .join("autostart");
+    let user = user_root().ok_or("无法识别用户目录")?;
     let allowed = roots().into_iter().map(|(p, _)| p).collect::<Vec<_>>();
     desktop::user_override(
         Path::new(path),

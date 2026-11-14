@@ -15,7 +15,7 @@ use std::{
 };
 use walkdir::WalkDir;
 
-// Only paths returned by the latest junk scan can be submitted for permanent cleanup.
+// Only targets returned by the latest junk scan can be submitted for cleanup.
 #[derive(Default)]
 struct JunkReceipt {
     paths: HashSet<PathBuf>,
@@ -23,6 +23,8 @@ struct JunkReceipt {
     action_paths: HashMap<String, Vec<PathBuf>>,
     developer: HashMap<PathBuf, (u64, String)>,
     developer_groups: HashMap<String, Vec<crate::models::CleanFileDetail>>,
+    #[cfg(target_os = "linux")]
+    stale_autostart: HashMap<PathBuf, crate::autostart::StaleUserEntry>,
 }
 static SCANNED_JUNK: LazyLock<Mutex<JunkReceipt>> =
     LazyLock::new(|| Mutex::new(JunkReceipt::default()));
@@ -210,7 +212,8 @@ fn children_controlled(
         match entry {
             Ok(entry) => {
                 for path in unprotected_targets(&entry.path(), excluded, cancelled, warnings) {
-                    if let Some(value) = item_controlled(&path, reason, selected, cancelled, report) {
+                    if let Some(value) = item_controlled(&path, reason, selected, cancelled, report)
+                    {
                         result.push(value);
                     }
                 }
@@ -245,6 +248,81 @@ fn category(id: &str, title: &str, desc: &str, mut items: Vec<CleanItem>) -> Cle
         count: items.len(),
         items,
     }
+}
+
+#[cfg(target_os = "linux")]
+fn scan_stale_autostart(
+    excluded: &[PathBuf],
+    cancelled: &dyn Fn() -> bool,
+    warnings: &mut Vec<String>,
+    report: &mut impl FnMut(&str, u64),
+) -> (
+    CleanCategory,
+    HashMap<PathBuf, crate::autostart::StaleUserEntry>,
+) {
+    let mut items = Vec::new();
+    let mut snapshots = HashMap::new();
+    if let Some(root) = crate::autostart::user_root() {
+        match fs::read_dir(&root) {
+            Ok(entries) => {
+                for entry in entries {
+                    if cancelled() {
+                        break;
+                    }
+                    let path = match entry {
+                        Ok(entry) => entry.path(),
+                        Err(error) => {
+                            warnings.push(format!("{}: {error}", root.display()));
+                            continue;
+                        }
+                    };
+                    let Some(snapshot) = crate::autostart::stale_user_entry(&path) else {
+                        continue;
+                    };
+                    let Some(value) = snapshot.canonical.to_str() else {
+                        continue;
+                    };
+                    if excluded_target(&path, excluded)
+                        || excluded_target(&snapshot.canonical, excluded)
+                    {
+                        continue;
+                    }
+                    let size = snapshot.size();
+                    report(value, size);
+                    items.push(CleanItem {
+                        id: value.into(),
+                        path: value.into(),
+                        name: snapshot.name.clone(),
+                        size_bytes: size,
+                        size_str: format_size(size),
+                        reason: "启动程序缺失，清理时将配置文件移入废纸篓".into(),
+                        can_delete: true,
+                        selected: false,
+                        size_known: true,
+                        action: None,
+                        details: Some(format!(
+                            "缺失的程序\n{}\n配置文件\n{}",
+                            snapshot.program,
+                            path.display()
+                        )),
+                        files: Vec::new(),
+                    });
+                    snapshots.insert(snapshot.canonical.clone(), snapshot);
+                }
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => warnings.push(format!("无法读取 {}: {error}", root.display())),
+        }
+    }
+    (
+        category(
+            "stale_autostart",
+            "失效启动项",
+            "启动程序已缺失的用户配置",
+            items,
+        ),
+        snapshots,
+    )
 }
 
 pub fn scan_system_junk() -> Vec<CleanCategory> {
@@ -398,6 +476,11 @@ pub fn scan_system_junk_controlled(
             ),
         ));
     }
+    #[cfg(target_os = "linux")]
+    let (startup_category, startup_snapshots) =
+        scan_stale_autostart(&excluded, cancelled, &mut warnings, &mut report);
+    #[cfg(target_os = "linux")]
+    categories.push(startup_category);
     report(
         "开发工具历史缓存",
         categories.iter().map(|c| c.total_size_bytes).sum(),
@@ -482,13 +565,20 @@ pub fn scan_system_junk_controlled(
     );
     let mut allowed: HashSet<PathBuf> = categories
         .iter()
+        .filter(|category| category.id != "stale_autostart")
         .flat_map(|c| &c.items)
         .filter(|i| i.can_delete && i.action.is_none())
         .filter_map(|i| fs::canonicalize(&i.path).ok())
         .collect();
     allowed.extend(developer_receipt.keys().cloned());
+    #[cfg(target_os = "linux")]
+    allowed.extend(startup_snapshots.keys().cloned());
     if let Ok(mut receipt) = SCANNED_JUNK.lock() {
         receipt.paths = allowed;
+        #[cfg(target_os = "linux")]
+        {
+            receipt.stale_autostart = startup_snapshots;
+        }
         receipt.developer = developer_receipt;
         receipt.developer_groups = developer_groups;
         receipt.action_paths = categories
@@ -1179,6 +1269,8 @@ pub fn delete_clean_items_controlled(
     let expanded = expand_developer_groups(&paths, &receipt.developer_groups)?;
     let allowed = receipt.paths.clone();
     let developer = receipt.developer.clone();
+    #[cfg(target_os = "linux")]
+    let stale_autostart = receipt.stale_autostart.clone();
     let actions = receipt.actions.clone();
     let action_paths = receipt.action_paths.clone();
     let total = expanded.len() as u64;
@@ -1284,37 +1376,40 @@ pub fn delete_clean_items_controlled(
             report_action(&mut report, total, &mut progress, value, "failed", error);
             continue;
         }
-        let result = if path.is_dir() {
-            fs::remove_dir_all(path)
-        } else {
-            fs::remove_file(path)
+        let remove = || -> Result<&str, String> {
+            #[cfg(target_os = "linux")]
+            if let Some(snapshot) = stale_autostart
+                .get(original)
+                .or_else(|| stale_autostart.get(path))
+            {
+                if path != &snapshot.canonical || !snapshot.still_matches() {
+                    return Err("启动项配置或程序状态已变化，请重新扫描".into());
+                }
+                platform::move_to_trash(path)?;
+                return Ok("已移入废纸篓");
+            }
+            if path.is_dir() {
+                fs::remove_dir_all(path)
+            } else {
+                fs::remove_file(path)
+            }
+            .map_err(|error| format!("{error}；目录可能已部分处理，请重新扫描确认剩余内容"))?;
+            Ok("已清理；容量为扫描时逻辑大小")
         };
-        match result {
-            Ok(_) => {
-                report_action(
-                    &mut report,
-                    total,
-                    &mut progress,
-                    value,
-                    "success",
-                    "已清理；容量为扫描时逻辑大小",
-                );
+        match remove() {
+            Ok(message) => {
+                report_action(&mut report, total, &mut progress, value, "success", message);
                 if let Ok(mut receipt) = SCANNED_JUNK.lock() {
                     receipt.paths.remove(path);
+                    #[cfg(target_os = "linux")]
+                    receipt.stale_autostart.remove(path);
                     receipt.developer.remove(path);
                     for files in receipt.developer_groups.values_mut() {
                         files.retain(|file| Path::new(&file.path) != path);
                     }
                 }
             }
-            Err(error) => report_action(
-                &mut report,
-                total,
-                &mut progress,
-                value,
-                "failed",
-                format!("{error}；目录可能已部分处理，请重新扫描确认剩余内容"),
-            ),
+            Err(error) => report_action(&mut report, total, &mut progress, value, "failed", error),
         }
     }
     Ok(report)
@@ -1679,11 +1774,7 @@ mod tests {
             root.join("JetBrains/nested/keep"),
         ];
         #[cfg(unix)]
-        std::os::unix::fs::symlink(
-            root.join("OtherCache"),
-            root.join("JetBrains/link"),
-        )
-        .unwrap();
+        std::os::unix::fs::symlink(root.join("OtherCache"), root.join("JetBrains/link")).unwrap();
         let mut warnings = Vec::new();
         let items = children_controlled(
             &root,

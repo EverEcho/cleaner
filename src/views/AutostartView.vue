@@ -1,28 +1,26 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue';
+import { computed, onMounted, ref } from 'vue';
 import { invoke, isTauri } from '@tauri-apps/api/core';
 import { ElMessage } from 'element-plus';
 import { Monitor, Power, RefreshCw, Search } from 'lucide-vue-next';
 import { platformInfo, loadPlatform } from '../platform';
 import PageHeader from '../layout/PageHeader.vue';
 import SummaryDetails from '../components/SummaryDetails.vue';
-import ScanAction from '../components/ScanAction.vue';
-import ScanningRadar from '../layout/ScanningRadar.vue';
 
-interface AutostartItem { path: string; name: string; exec: string; comment: string; enabled: boolean; is_user: boolean }
+interface AutostartItem { path: string; name: string; exec: string; comment: string; enabled: boolean; is_user: boolean; missing_program?: string }
 const desktopConnected = isTauri();
-const scanning = ref(false);
+const loading = ref(false);
 const loaded = ref(false);
 const error = ref('');
 const search = ref('');
 const toggling = ref(false);
 const autostartList = ref<AutostartItem[]>([]);
-const enabledCount = computed(() => autostartList.value.filter(item => item.enabled).length);
+const enabledCount = computed(() => autostartList.value.filter(item => item.enabled && !item.missing_program).length);
 const filtered = computed(() => autostartList.value.filter(item => item.name.toLowerCase().includes(search.value.toLowerCase())));
 
 async function loadAutostart() {
-  if (!desktopConnected || scanning.value) return;
-  scanning.value = true;
+  if (!desktopConnected || loading.value) return;
+  loading.value = true;
   loaded.value = false;
   autostartList.value = [];
   error.value = '';
@@ -31,7 +29,7 @@ async function loadAutostart() {
     autostartList.value = await invoke<AutostartItem[]>('get_autostart_items');
     loaded.value = true;
   } catch (cause) { error.value = String(cause); }
-  finally { scanning.value = false; }
+  finally { loading.value = false; }
 }
 async function handleToggleAutostart(item: AutostartItem) {
   const enabled = item.enabled;
@@ -48,27 +46,43 @@ async function handleToggleAutostart(item: AutostartItem) {
   await loadAutostart();
   toggling.value = false;
 }
+onMounted(() => { void loadAutostart(); });
 </script>
 
 <template>
   <div class="tool-page">
     <PageHeader title="启动项" subtitle="让需要的应用随你启动，其他的留待稍后。">
-      <template #actions><el-button v-if="!scanning && (loaded || error)" :disabled="!desktopConnected || toggling" @click="loadAutostart"><RefreshCw :size="14" />{{ error ? '重试读取' : '刷新列表' }}</el-button></template>
+      <template #actions><el-button v-if="desktopConnected" :loading="loading" :disabled="loading || toggling" @click="loadAutostart"><RefreshCw v-if="!loading" :size="14" />{{ loading ? '正在读取' : error ? '重试读取' : '刷新列表' }}</el-button></template>
     </PageHeader>
     <div class="tool-content">
       <div v-if="!desktopConnected" class="empty-state"><span class="empty-icon"><Monitor :size="30" /></span><h2>让开机更从容</h2><p>请在桌面应用中打开，查看并管理本机的登录启动项。</p><span class="state-label">浏览器预览 · 尚未连接桌面端</span></div>
-      <div v-else-if="!loaded && !scanning && !error" class="empty-state"><span class="empty-icon"><Power :size="30" /></span><h2>查看登录启动项</h2><p>读取本机启动项，按需调整登录启动状态。</p><ScanAction initial :scanning="false" :disabled="toggling" label="读取列表" @start="loadAutostart" /></div>
-      <ScanningRadar v-else-if="scanning" title="正在读取列表…" sub-title="完成后可查看并管理项目" />
       <template v-else>
         <div class="result-summary"><strong>{{ loaded ? enabledCount : '—' }} <small>项已启用</small></strong><span>共 {{ loaded ? autostartList.length : '—' }} 个启动项</span><div class="summary-actions"><SummaryDetails :label="error ? '读取未完成' : '结果提示'" :count="(error ? 1 : 0) + (platformInfo?.autostart_note ? 1 : 0)" :tone="error ? 'danger' : undefined"><p v-if="error" class="detail-message danger">{{ error }}</p><p v-if="platformInfo?.autostart_note">{{ platformInfo?.autostart_note }}</p><p v-if="!error && !(platformInfo?.autostart_note)">暂无结果提示</p></SummaryDetails></div></div>
         <div class="result-heading"><p class="table-hint">通过开关调整登录启动状态</p><el-input v-model="search" placeholder="搜索启动项" clearable class="search-input"><template #prefix><Search :size="14" /></template></el-input></div>
-        <div v-loading="scanning" class="table-panel">
-          <el-table :data="filtered" :empty-text="scanning ? '正在读取启动项…' : loaded ? (search ? '没有匹配的启动项' : '未发现登录启动项') : '尚未读取启动项'">
-            <el-table-column type="expand" width="40"><template #default="{ row }"><div class="row-details"><span>启动命令</span><code>{{ row.exec }}</code></div></template></el-table-column>
+        <div v-loading="loading" class="table-panel">
+          <el-table :data="filtered" :empty-text="error ? '读取失败，请点击右上角重试' : loading ? '正在读取启动项…' : loaded ? (search ? '没有匹配的启动项' : '未发现登录启动项') : '尚未读取启动项'">
+            <el-table-column type="expand" width="40">
+              <template #default="{ row }">
+                <div class="row-details">
+                  <span>启动命令</span><code>{{ row.exec }}</code>
+                  <span>配置文件</span><code>{{ row.path }}</code>
+                  <template v-if="row.missing_program">
+                    <span>缺失的程序</span><code>{{ row.missing_program }}</code>
+                  </template>
+                </div>
+              </template>
+            </el-table-column>
             <el-table-column label="应用" min-width="185"><template #default="{ row }"><div class="app-cell"><span class="app-icon"><Power :size="16" /></span><div><strong>{{ row.name }}</strong><span v-if="row.comment" :title="row.comment">{{ row.comment }}</span></div></div></template></el-table-column>
 
             <el-table-column label="范围" width="86"><template #default="{ row }"><span class="scope-tag" :class="{ system: !row.is_user }">{{ row.is_user ? '当前用户' : '系统级' }}</span></template></el-table-column>
-            <el-table-column label="状态" width="96" align="center"><template #default="{ row }"><el-tooltip :content="platformInfo?.os === 'macos' && !row.is_user ? '系统级启动项由 macOS 管理' : row.enabled ? '点击禁用' : '点击启用'"><el-switch v-model="row.enabled" :disabled="scanning || toggling || (platformInfo?.os === 'macos' && !row.is_user)" style="--el-switch-on-color: var(--accent-strong); --el-switch-off-color: var(--switch-off)" :aria-label="`${row.name}登录启动`" @change="handleToggleAutostart(row)" /></el-tooltip></template></el-table-column>
+            <el-table-column label="状态" width="96" align="center">
+              <template #default="{ row }">
+                <div class="startup-state">
+                  <el-tooltip :content="platformInfo?.os === 'macos' && !row.is_user ? '系统级启动项由 macOS 管理' : row.enabled ? '点击禁用' : '点击启用'"><el-switch v-model="row.enabled" :disabled="loading || toggling || (platformInfo?.os === 'macos' && !row.is_user)" style="--el-switch-on-color: var(--accent-strong); --el-switch-off-color: var(--switch-off)" :aria-label="`${row.name}登录启动`" @change="handleToggleAutostart(row)" /></el-tooltip>
+                  <el-tag v-if="row.missing_program" size="small" type="warning" :title="row.missing_program">程序缺失</el-tag>
+                </div>
+              </template>
+            </el-table-column>
           </el-table>
         </div>
         <p class="footnote">启动项开关仅调整登录启动状态，不会卸载应用。</p>
@@ -102,6 +116,7 @@ async function handleToggleAutostart(item: AutostartItem) {
 .app-cell div span { display: block; font-size: 10px; color: var(--text-faint); max-width: 185px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 3px; }
 .scope-tag { font-size: 10px; color: var(--text-muted); border: 1px solid var(--accent-border); background: var(--accent-soft); border-radius: 5px; padding: 3px 7px; white-space: nowrap; }
 .scope-tag.system { color: var(--text-muted); border-color: var(--warning-border); background: var(--warning-soft); }
+.startup-state { display: flex; flex-direction: column; align-items: center; gap: 4px; }
 .footnote { color: var(--text-faint); font-size: 11px; line-height: 1.8; margin: 15px 0 0; }
 .empty-state { min-height: 380px; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; }
 .empty-icon { display: grid; place-items: center; width: 78px; height: 78px; border-radius: 24px; background: linear-gradient(135deg, rgba(var(--accent-rgb), 0.13), rgba(var(--cyan-rgb), 0.06)); border: 1px solid var(--accent-border); color: var(--accent); margin-bottom: 24px; }
