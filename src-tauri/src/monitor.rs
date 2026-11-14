@@ -114,9 +114,9 @@ pub fn sample(interface: &str) -> Result<MonitorSnapshot, String> {
     state.networks.refresh(true);
     snapshot.network_interfaces = state
         .networks
-        .iter()
-        .map(|(name, _)| name.clone())
-        .filter(|name| name != "lo" && name != "lo0")
+        .keys()
+        .filter(|&name| name != "lo" && name != "lo0")
+        .cloned()
         .collect();
     snapshot.network_interfaces.sort();
     let counters: Counters = state

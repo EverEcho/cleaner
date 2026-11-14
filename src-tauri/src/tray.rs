@@ -97,7 +97,7 @@ pub fn title(
         .join("  ")
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 mod native {
     use super::*;
     use std::{
@@ -118,6 +118,14 @@ mod native {
         last_hide: Mutex<Option<Instant>>,
         wake: Condvar,
         revision: AtomicU64,
+        summary: MenuItem<tauri::Wry>,
+    }
+    fn icon() -> tauri::Result<tauri::image::Image<'static>> {
+        #[cfg(target_os = "macos")]
+        let bytes = include_bytes!("../icons/tray-template.png").as_slice();
+        #[cfg(target_os = "linux")]
+        let bytes = include_bytes!("../icons/32x32.png").as_slice();
+        tauri::image::Image::from_bytes(bytes)
     }
     fn hide_panel(app: &tauri::AppHandle) {
         if let Some(panel) = app.get_webview_window("tray") {
@@ -147,11 +155,9 @@ mod native {
         if let Some(tray) = app.tray_by_id("resources") {
             tray.set_visible(preferences.tray.enabled)
                 .map_err(|e| e.to_string())?;
-            let icon = if preferences.tray.show_icon {
-                Some(
-                    tauri::image::Image::from_bytes(include_bytes!("../icons/tray-template.png"))
-                        .map_err(|e| e.to_string())?,
-                )
+            // Linux indicators need an icon even when old macOS settings hide it.
+            let icon = if cfg!(target_os = "linux") || preferences.tray.show_icon {
+                Some(icon().map_err(|e| e.to_string())?)
             } else {
                 None
             };
@@ -222,11 +228,19 @@ mod native {
     }
     pub fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         let preferences = crate::preferences::load(app.handle()).unwrap_or_default();
+        let summary = MenuItem::with_id(
+            app,
+            "summary",
+            title(&preferences.tray, None, preferences.monitor_enabled),
+            false,
+            None::<&str>,
+        )?;
         app.manage(Runtime {
             preferences: Mutex::new(preferences.clone()),
             last_hide: Mutex::new(None),
             wake: Condvar::new(),
             revision: AtomicU64::new(0),
+            summary: summary.clone(),
         });
         let panel =
             WebviewWindowBuilder::new(app, "tray", WebviewUrl::App("index.html#/tray".into()))
@@ -247,24 +261,26 @@ mod native {
             }
         });
         let show = MenuItem::with_id(app, "show", "打开 AppClear", true, None::<&str>)?;
+        let resources = MenuItem::with_id(app, "panel", "打开资源面板", true, None::<&str>)?;
         let monitor =
             MenuItem::with_id(app, "monitor", "资源监控与菜单栏设置", true, None::<&str>)?;
         let quit = MenuItem::with_id(app, "quit", "退出 AppClear", true, None::<&str>)?;
-        let menu = Menu::with_items(app, &[&show, &monitor, &quit])?;
+        let menu = Menu::with_items(app, &[&summary, &resources, &show, &monitor, &quit])?;
         TrayIconBuilder::with_id("resources")
-            .icon(tauri::image::Image::from_bytes(include_bytes!(
-                "../icons/tray-template.png"
-            ))?)
+            .icon(icon()?)
             .icon_as_template(true)
             .tooltip("AppClear · 本机资源")
             .menu(&menu)
-            .show_menu_on_left_click(false)
+            .show_menu_on_left_click(cfg!(target_os = "linux"))
             .on_menu_event(|app, event| match event.id().as_ref() {
                 "show" => {
                     let _ = open_main(app, "/");
                 }
                 "monitor" => {
                     let _ = open_main(app, "/monitor");
+                }
+                "panel" => {
+                    let _ = show_panel(app);
                 }
                 "quit" => app.exit(0),
                 _ => {}
@@ -322,11 +338,17 @@ mod native {
                         let _ = app.emit("monitor-snapshot", snapshot);
                     }
                     if let Some(tray) = app.tray_by_id("resources") {
-                        let _ = tray.set_title(Some(title(
+                        let text = title(
                             &preferences.tray,
                             snapshot.as_ref(),
                             preferences.monitor_enabled,
-                        )));
+                        );
+                        let _ = tray.set_title(Some(&text));
+                        let _ = state.summary.set_text(if text.is_empty() {
+                            "AppClear · 本机资源"
+                        } else {
+                            &text
+                        });
                         let tooltip = snapshot
                             .as_ref()
                             .map(|s| {
@@ -392,20 +414,32 @@ mod native {
         {
             return panel.set_focus().map_err(|e| e.to_string());
         }
-        let rect = tray
-            .rect()
-            .map_err(|e| e.to_string())?
-            .ok_or("菜单栏图标尚不可见")?;
-        let scale = app
-            .primary_monitor()
-            .map_err(|e| e.to_string())?
-            .map(|monitor| monitor.scale_factor())
-            .unwrap_or(1.0);
-        let position = rect.position.to_physical::<f64>(scale);
-        toggle_panel(app, rect, position).map_err(|e| e.to_string())
+        #[cfg(target_os = "linux")]
+        {
+            // Linux emits no tray mouse events and exposes no icon rectangle.
+            let _ = tray;
+            let panel = app.get_webview_window("tray").ok_or("资源面板不可用")?;
+            panel.center().map_err(|e| e.to_string())?;
+            panel.show().map_err(|e| e.to_string())?;
+            panel.set_focus().map_err(|e| e.to_string())
+        }
+        #[cfg(target_os = "macos")]
+        {
+            let rect = tray
+                .rect()
+                .map_err(|e| e.to_string())?
+                .ok_or("菜单栏图标尚不可见")?;
+            let scale = app
+                .primary_monitor()
+                .map_err(|e| e.to_string())?
+                .map(|monitor| monitor.scale_factor())
+                .unwrap_or(1.0);
+            let position = rect.position.to_physical::<f64>(scale);
+            toggle_panel(app, rect, position).map_err(|e| e.to_string())
+        }
     }
 }
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 pub use native::*;
 
 #[cfg(test)]
@@ -413,8 +447,10 @@ mod tests {
     use super::*;
     #[test]
     fn menu_title_respects_order_units_and_unknown_values() {
-        let mut settings = TrayPreferences::default();
-        settings.metrics = vec![TrayMetric::Memory, TrayMetric::Download, TrayMetric::Cpu];
+        let mut settings = TrayPreferences {
+            metrics: vec![TrayMetric::Memory, TrayMetric::Download, TrayMetric::Cpu],
+            ..TrayPreferences::default()
+        };
         let snapshot = MonitorSnapshot {
             memory_used: Some(25),
             memory_total: Some(100),

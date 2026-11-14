@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "tray",
-  "description": "Local resource panel for the macOS menu bar",
+  "description": "Local resource panel for the macOS menu bar and Linux system tray",
   "windows": ["tray"],
   "permissions": ["core:default"]
 }

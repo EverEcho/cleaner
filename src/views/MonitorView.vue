@@ -20,7 +20,7 @@ onDeactivated(()=>{settingsDialog.value=false;});
 <template>
   <main class="monitor-page">
     <PageHeader title="本机监控" subtitle="轻量观察资源使用与后台任务，不扫描应用文件。"><template #actions>
-      <template v-if="native"><SummaryDetails label="tips" title="采样说明" :count="monitorSnapshot?.warnings.length||undefined" :tone="monitorSnapshot?.warnings.length?'warning':undefined"><p v-if="monitorSnapshot">最近采样：{{ new Date(monitorSnapshot.sampled_at).toLocaleTimeString() }} · 磁盘每 30 秒刷新</p><p>首次 CPU 和网速需要两个采样点；缺失数据显示为 —。网速按实际时间差统计，自动模式合计物理网卡，不重复计算 VPN 隧道流量。</p><p>最近最多 60 次记录仅保留在本次会话。暂停后保留最后数据，菜单栏与主窗口共享采样设置。</p><p v-for="note in monitorSnapshot?.warnings" :key="note" class="detail-message warning">{{ note }}</p></SummaryDetails><SummaryDetails v-if="monitorError" label="采样未完成" :count="1" tone="warning"><p>{{ monitorError }}</p></SummaryDetails><el-button v-if="platformInfo?.os==='macos'" @click="settingsDialog=true"><SlidersHorizontal :size="14"/>菜单栏设置</el-button></template><el-switch :model-value="preferences.monitor_enabled" :disabled="!native" active-text="资源采样" aria-label="启用资源采样" @change="toggle(Boolean($event))"/>
+      <template v-if="native"><SummaryDetails label="tips" title="采样说明" :count="monitorSnapshot?.warnings.length||undefined" :tone="monitorSnapshot?.warnings.length?'warning':undefined"><p v-if="monitorSnapshot">最近采样：{{ new Date(monitorSnapshot.sampled_at).toLocaleTimeString() }} · 磁盘每 30 秒刷新</p><p>首次 CPU 和网速需要两个采样点；缺失数据显示为 —。网速按实际时间差统计，自动模式合计物理网卡，不重复计算 VPN 隧道流量。</p><p>最近最多 60 次记录仅保留在本次会话。暂停后保留最后数据，菜单栏与主窗口共享采样设置。</p><p v-for="note in monitorSnapshot?.warnings" :key="note" class="detail-message warning">{{ note }}</p></SummaryDetails><SummaryDetails v-if="monitorError" label="采样未完成" :count="1" tone="warning"><p>{{ monitorError }}</p></SummaryDetails><el-button v-if="['macos','linux'].includes(platformInfo?.os||'')" @click="settingsDialog=true"><SlidersHorizontal :size="14"/>{{ platformInfo?.os==='linux'?'托盘设置':'菜单栏设置' }}</el-button></template><el-switch :model-value="preferences.monitor_enabled" :disabled="!native" active-text="资源采样" aria-label="启用资源采样" @change="toggle(Boolean($event))"/>
     </template></PageHeader>
     <div class="monitor-content">
       <div v-if="!native" class="notice"><Activity :size="40"/><h2>本机资源，在这里看清</h2><p>请在桌面应用中查看 CPU、内存和网络统计。</p></div>
@@ -31,7 +31,7 @@ onDeactivated(()=>{settingsDialog.value=false;});
         <section class="chart"><div><h2>近期采样</h2><span><i class="cpu"/>CPU <i class="memory"/>内存</span></div><svg viewBox="0 0 600 110" role="img" aria-label="最近最多60次 CPU 与内存使用率采样"><path d="M0 10H600M0 50H600M0 90H600" stroke="var(--line)"/><polyline :points="points('cpu')" fill="none" stroke="var(--accent)" stroke-width="2"/><polyline :points="points('memory')" fill="none" stroke="var(--cyan)" stroke-width="2"/></svg><p>{{ monitorHistory.length }} 次采样 · 每 {{ preferences.tray.interval_ms/1000 }} 秒自动刷新</p></section>
       </template>
     </div>
-    <el-dialog v-model="settingsDialog" title="自定义菜单栏" width="min(460px,90vw)" append-to-body><div class="settings-body"><TraySettings/></div></el-dialog>
+    <el-dialog v-model="settingsDialog" :title="platformInfo?.os==='linux'?'自定义系统托盘':'自定义菜单栏'" width="min(460px,90vw)" append-to-body><div class="settings-body"><TraySettings/></div></el-dialog>
   </main>
 </template>
 <style scoped>

@@ -12,6 +12,7 @@ function evaluate(code,mods){const exports={};new Function('require','exports',t
  }},'@tauri-apps/api/event':{listen:async(name,fn)=>{events.set(name,fn);return ()=>{events.delete(name);};}},'element-plus':{ElMessage:{error:e=>errors.push(e),warning:e=>warnings.push(e)}}};
  const preferences=evaluate(readFileSync('src/preferences.ts','utf8'),mods);mods['../preferences']=preferences;
  await preferences.loadPreferences();assert.equal(preferences.preferences.tray.interval_ms,2000,'old settings retain tray defaults');
+ mods['../platform']={platformInfo:vue.ref({os:'macos'})};
  const snapshot=vue.ref(null);mods['../monitor']={monitorSnapshot:snapshot};
  const descriptor=sfc.parse(readFileSync('src/components/TraySettings.vue','utf8')).descriptor;
  const component=evaluate(sfc.compileScript(descriptor,{id:'tray-settings'}).content,mods).default;component.render=()=>null;
@@ -25,8 +26,8 @@ function evaluate(code,mods){const exports={};new Function('require','exports',t
  fail=true;await state.change({interval_ms:1000});assert.equal(prefs.tray.interval_ms,5000,'failed saves preserve the last accepted settings');assert.equal(errors.length,1);fail=false;
  await state.change({interval_ms:1000});assert.equal(prefs.tray.interval_ms,1000,'failed save does not block retry');
  let release;hold=new Promise(resolve=>release=resolve);const pending=state.change({labeled:true});await flush();await state.change({labeled:false});release();await pending;hold=undefined;assert.equal(prefs.tray.labeled,true,'rapid overlapping edits are guarded');
- const stop=await preferences.subscribePreferences();events.get('preferences-changed')({payload:{...saves[saves.length-1],monitor_enabled:false}});assert.equal(prefs.monitor_enabled,false,'other windows receive saved settings');stop();app.unmount();
- console.log('PASS tray ordering, metric visibility, icon-only mode, adapter persistence, failure retry, rapid edit guard and preference sync');
+ const stop=await preferences.subscribePreferences();events.get('preferences-changed')({payload:{...saves[saves.length-1],monitor_enabled:false}});assert.equal(prefs.monitor_enabled,false,'other windows receive saved settings');stop();mods['../platform'].platformInfo.value={os:'linux'};assert.equal(state.linux,true);await state.change({show_icon:false});assert.equal(prefs.tray.show_icon,true,'Linux keeps a visible icon even when old settings hide it');app.unmount();
+ console.log('PASS tray ordering, metric visibility, icon-only mode, adapter persistence, failure retry, rapid edit guard, preference sync and Linux icon visibility');
  const native=mods['@tauri-apps/api/core'];native.invoke=async()=>({sampled_at:1000,cpu_percent:20,memory_total:100,memory_used:40,network_down:null,network_up:null,network_interface:'en0',network_interfaces:['en0'],warnings:[]});
  const mon=evaluate(readFileSync('src/monitor.ts','utf8'),{...mods,'./preferences':preferences});
  prefs.monitor_enabled=true;mon.startMonitor();await flush();assert.equal(mon.monitorHistory.value.length,1);

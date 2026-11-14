@@ -6,6 +6,7 @@ import { ArrowUpRight,ArrowDownLeft,Cpu,MemoryStick,HardDrive,SlidersHorizontal,
 import AppLogo from './components/AppLogo.vue';
 import MiniChart from './components/MiniChart.vue';
 import TraySettings from './components/TraySettings.vue';
+import {loadPlatform} from './platform';
 import {preferences,loadPreferences,savePreferences,subscribePreferences} from './preferences';
 import {monitorSnapshot as snapshot,monitorHistory as history,monitorError,startMonitor,stopMonitor,formatBytes,formatRate} from './monitor';
 const tab=ref<'overview'|'settings'>('overview'),native=isTauri(),busy=ref(false),error=ref('');
@@ -21,7 +22,7 @@ async function open(route:string){if(!native)return;try{await invoke('open_main_
 async function toggle(){if(busy.value)return;busy.value=true;try{await savePreferences({monitor_enabled:!preferences.monitor_enabled});}catch(cause){ElMessage.error(String(cause));}finally{busy.value=false;}}
 async function quit(){if(!native)return;try{await invoke('quit_app');}catch(cause){ElMessage.error(String(cause));}}
 function keydown(event:KeyboardEvent){if(event.key==='Escape'&&native)void invoke('hide_tray_panel').catch(cause=>ElMessage.error(String(cause)));}
-onMounted(async()=>{window.addEventListener('keydown',keydown);try{const stop=await subscribePreferences();if(disposed){stop();return;}unlisten=stop;await loadPreferences();if(!disposed)startMonitor();}catch(cause){error.value=String(cause);}});
+onMounted(async()=>{window.addEventListener('keydown',keydown);try{await loadPlatform();const stop=await subscribePreferences();if(disposed){stop();return;}unlisten=stop;await loadPreferences();if(!disposed)startMonitor();}catch(cause){error.value=String(cause);}});
 onUnmounted(()=>{disposed=true;unlisten?.();stopMonitor();window.removeEventListener('keydown',keydown);});
 </script>
 <template>
