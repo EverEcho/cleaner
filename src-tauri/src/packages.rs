@@ -1,10 +1,91 @@
-use crate::models::{AppInfo, format_size};
+use crate::models::{AppInfo, UpgradablePackage, format_size};
 use crate::platform::QueryCommand;
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::process::Command;
 
 pub use crate::app_profile::{AppChannel, AppScanReport};
+
+fn deb_ownership(paths: &[PathBuf]) -> std::io::Result<std::process::Output> {
+    Command::new("dpkg")
+        .args(["-S", "--"])
+        .args(paths)
+        .env("LC_ALL", "C")
+        .query_output()
+}
+
+fn deb_owned_paths(text: &str) -> impl Iterator<Item = (&str, &std::path::Path)> {
+    text.lines()
+        .filter_map(|line| line.split_once(": "))
+        .flat_map(|(owners, path)| {
+            let path = std::path::Path::new(path.trim());
+            owners.split(", ").map(move |owner| (owner, path))
+        })
+}
+
+/// Associate APT candidates with live desktop entries using package file ownership.
+pub(crate) fn apt_desktop_candidates(
+    candidates: &[UpgradablePackage],
+    cancelled: &dyn Fn() -> bool,
+) -> Vec<(usize, String, PathBuf)> {
+    if cancelled() || !candidates.iter().any(|pkg| pkg.manager == "apt") {
+        return Vec::new();
+    }
+    let launchers = crate::manual_apps::launchers_in(&crate::manual_apps::launcher_roots());
+    let mut paths = HashMap::new();
+    for launcher in &launchers {
+        if cancelled() {
+            return Vec::new();
+        }
+        let Some(binary) = crate::manual_apps::executable(&launcher.exec) else {
+            continue;
+        };
+        paths.insert(launcher.path.clone(), (launcher, binary.clone()));
+        paths.entry(binary.clone()).or_insert((launcher, binary));
+    }
+    if paths.is_empty() || cancelled() {
+        return Vec::new();
+    }
+    let Ok(output) = deb_ownership(&paths.keys().cloned().collect::<Vec<_>>()) else {
+        return Vec::new();
+    };
+    if !output.status.success() && output.status.code() != Some(1) {
+        return Vec::new();
+    }
+    match_apt_desktop_candidates(candidates, &paths, &String::from_utf8_lossy(&output.stdout))
+}
+
+fn match_apt_desktop_candidates(
+    candidates: &[UpgradablePackage],
+    paths: &HashMap<PathBuf, (&crate::manual_apps::Launcher, PathBuf)>,
+    ownership: &str,
+) -> Vec<(usize, String, PathBuf)> {
+    let mut matches = HashMap::new();
+    for (owner, path) in deb_owned_paths(ownership) {
+        let Some((launcher, binary)) = paths.get(path) else {
+            continue;
+        };
+        let (name, arch) = owner
+            .split_once(':')
+            .map_or((owner, None), |(name, arch)| (name, Some(arch)));
+        let mut candidates = candidates.iter().enumerate().filter(|(_, pkg)| {
+            pkg.manager == "apt"
+                && pkg.name == name
+                && !pkg.arch.is_empty()
+                && arch.is_none_or(|arch| pkg.arch == arch)
+        });
+        if let Some((index, _)) = candidates.next()
+            && candidates.next().is_none()
+        {
+            matches
+                .entry(index)
+                .or_insert_with(|| (index, launcher.name.clone(), binary.clone()));
+        }
+    }
+    let mut matches: Vec<_> = matches.into_values().collect();
+    matches.sort_by_key(|(index, _, _)| *index);
+    matches
+}
 
 pub fn list_installed_apps() -> Vec<AppInfo> {
     scan_installed_apps_report().apps
@@ -90,12 +171,7 @@ fn inventory(
 
     let ownership = if !desktop_paths.is_empty() && crate::platform::command_path("dpkg").is_some()
     {
-        match Command::new("dpkg")
-            .arg("-S")
-            .args(&desktop_paths)
-            .env("LANG", "C")
-            .query_output()
-        {
+        match deb_ownership(&desktop_paths) {
             Ok(output) => {
                 if !output.status.success() && output.status.code() != Some(1) {
                     report
@@ -252,14 +328,18 @@ fn inventory(
     ) {
         for line in String::from_utf8_lossy(&output.stdout).lines() {
             let fields: Vec<_> = line.split('\t').collect();
-            if fields.len() < 6 || !fields[1].starts_with("app/") || fields[2].is_empty() {
+            let reference = fields
+                .get(1)
+                .and_then(|value| crate::updates::flatpak_app_ref(value));
+            let Some(reference) = reference.filter(|_| fields.len() >= 6 && !fields[2].is_empty())
+            else {
                 report
                     .warnings
                     .push("Flatpak 返回了无法确认完整身份的条目，已跳过".into());
                 continue;
-            }
+            };
             apps.push(AppInfo {
-                key: format!("{}:{}", fields[2], fields[1]),
+                key: format!("{}:{reference}", fields[2]),
                 name: if fields[5].is_empty() {
                     fields[0].into()
                 } else {
@@ -509,4 +589,55 @@ fn parse_size(value: &str) -> Option<u64> {
 
 pub fn uninstall_package(_pkg_type: &str, _key: &str) -> Result<String, String> {
     Err("卸载需要先生成并确认影响预览，请刷新应用列表".into())
+}
+
+#[cfg(test)]
+mod apt_desktop_tests {
+    use super::*;
+
+    #[test]
+    fn matches_package_owners_without_using_the_display_name_as_identity() {
+        let launcher = crate::manual_apps::Launcher {
+            path: "/home/test/.local/share/applications/editor.desktop".into(),
+            name: "Visual Studio Code".into(),
+            icon: String::new(),
+            exec: "/usr/share/code/code %F".into(),
+            comment: String::new(),
+        };
+        let binary = PathBuf::from("/usr/share/code/code");
+        let paths = HashMap::from([
+            (launcher.path.clone(), (&launcher, binary.clone())),
+            (binary.clone(), (&launcher, binary)),
+        ]);
+        let candidate = |name: &str, arch: &str| UpgradablePackage {
+            name: name.into(),
+            arch: arch.into(),
+            manager: "apt".into(),
+            current_version: "1.144.1-1793549573".into(),
+            new_version: "1.145.2-1793945276".into(),
+            repository: "stable".into(),
+        };
+        let candidates = [
+            candidate("code", "amd64"),
+            candidate("code", "arm64"),
+            candidate("visual-studio-code", "amd64"),
+        ];
+        assert!(
+            match_apt_desktop_candidates(&candidates, &paths, "code: /usr/share/code/code")
+                .is_empty()
+        );
+        assert!(
+            match_apt_desktop_candidates(&candidates, &paths, "code:amd64: /tmp/unrelated")
+                .is_empty()
+        );
+        let matched = match_apt_desktop_candidates(
+            &candidates,
+            &paths,
+            "code:amd64: /usr/share/code/code\ncode:amd64: /home/test/.local/share/applications/editor.desktop",
+        );
+        assert_eq!(
+            matched,
+            vec![(0, launcher.name, "/usr/share/code/code".into())]
+        );
+    }
 }

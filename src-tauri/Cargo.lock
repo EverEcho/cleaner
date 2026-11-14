@@ -53,7 +53,10 @@ version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
  "chrono",
+ "flate2",
  "hex",
+ "plist",
+ "quick-xml",
  "semver",
  "serde",
  "serde_json",

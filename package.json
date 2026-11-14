@@ -7,6 +7,7 @@
     "dev": "vite",
     "build": "vue-tsc --noEmit && vite build",
     "test:tray": "node scripts/check-tray.cjs",
+    "test:updates": "node scripts/check-updates.cjs",
     "preview": "vite preview",
     "tauri": "tauri"
   },

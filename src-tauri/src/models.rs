@@ -28,6 +28,8 @@ pub struct AutostartItem {
     pub comment: String,
     pub enabled: bool,
     pub is_user: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub missing_program: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -114,11 +116,28 @@ pub struct SoftwareUpdateReport {
     pub warnings: Vec<String>,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SoftwareKind {
+    #[default]
+    Cli,
+    Gui,
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ToolUpdate {
     pub id: String,
     pub name: String,
     pub provider: String,
+    #[serde(default)]
+    pub kind: SoftwareKind,
+    #[serde(default)]
+    pub architecture: String,
+    #[serde(default)]
+    pub release_channel: String,
+    /// Original native package target. Execution still rechecks the manager's candidate.
+    #[serde(default)]
+    pub native_update: Option<UpgradablePackage>,
     pub current_version: String,
     pub latest_version: String,
     pub status: String,

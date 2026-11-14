@@ -12,7 +12,7 @@ import ScanningRadar from '../layout/ScanningRadar.vue';
 import { runTask, activeTask } from '../tasks';
 
 interface UpgradablePkg { name: string; manager: string; current_version: string; new_version: string; arch: string; repository: string }
-interface ToolUpdate { id: string; name: string; provider: string; current_version: string; latest_version: string; status: string; install_path: string; source_url: string; update_hint: string; note: string }
+interface ToolUpdate { id: string; name: string; provider: string; kind: 'cli'|'gui'; architecture: string; release_channel: string; native_update?: UpgradablePkg|null; current_version: string; latest_version: string; status: string; install_path: string; source_url: string; update_hint: string; note: string }
 interface UpdateChannel { id: string; provider: string; state: string; message: string; checked_at: string; source_path: string; cache_seconds: number }
 interface UpdateReport { packages: UpgradablePkg[]; tools: ToolUpdate[]; warnings: string[]; channels: UpdateChannel[]; checked_at: string; expires_at: string; executable_tools: string[]; automatic_managers: string[] }
 interface QueueItem { id: string; name: string; provider: string; target: string; state: 'pending'|'running'|'succeeded'|'failed'|'skipped'; message: string; package?: UpgradablePkg; tool?: ToolUpdate }
@@ -25,23 +25,30 @@ const search = ref(''), filterManager = ref('all'), onlyAvailable = ref(false), 
 const currentLog = ref('准备检查安装渠道'), logs = ref<string[]>([]);
 const busy = computed(() => checking.value || refreshing.value || queueRunning.value);
 const checkTask = computed(() => activeTask('check_software_updates'));
-const providerLabels: Record<string, string> = { 'github-release': '独立安装', 'github-branch': '源码安装', npm: 'npm', uv: 'uv', pipx: 'pipx', 'brew-cask':'Homebrew 应用', brew:'Homebrew', pacman:'Arch' };
+const providerLabels: Record<string, string> = { apt: 'APT', flatpak: 'Flatpak', 'codex-gui': 'Codex GUI 官方源', 'github-release': '独立安装', 'github-branch': '源码安装', npm: 'npm', uv: 'uv', pipx: 'pipx', 'brew-cask':'Homebrew 应用', brew:'Homebrew', pacman:'Arch' };
 const channelLabels: Record<string,string> = { completed:'检测完成 · 有更新', 'no-update':'检测完成 · 无更新', failed:'检测失败', unsupported:'无法自动检测', cancelled:'已停止' };
 const queueLabels: Record<string,string> = { pending:'等待', running:'执行中', succeeded:'完成', failed:'失败', skipped:'已停止后续' };
 const toolStatuses: Record<string, { label: string; type: 'success'|'warning'|'info'|'danger' }> = {
   'no-update':{label:'未发现更新',type:'success'}, available:{label:'有更新',type:'warning'}, current:{label:'已是最新',type:'success'}, ahead:{label:'本地版本较新',type:'info'}, unknown:{label:'按原渠道核对',type:'info'}, failed:{label:'检测未完成',type:'danger'},
+  cancelled:{label:'已停止',type:'info'},
 };
 const completedChannels = computed(() => channels.value.filter(c => ['completed','no-update'].includes(c.state)).length);
 const availableManagers = computed(() => Array.from(new Set(channels.value.map(c => c.provider))));
-const availableCount = computed(() => updates.value.length + tools.value.filter(t => t.status === 'available').length);
-const selectedCount = computed(() => selectedPackages.value.length + selectedTools.value.length);
+const availableCount = computed(() => uniqueQueue([...updates.value.map(packageQueue), ...tools.value.filter(t => t.status === 'available').map(toolQueue)]).length);
+const selectedCount = computed(() => uniqueQueue([...selectedPackages.value.map(packageQueue), ...selectedTools.value.map(toolQueue)]).length);
 const filteredUpdates = computed(() => updates.value.filter(p => (filterManager.value === 'all' || p.manager === filterManager.value) && `${p.name} ${p.arch} ${p.repository}`.toLowerCase().includes(search.value.toLowerCase())));
-const filteredTools = computed(() => tools.value.filter(t => (!onlyAvailable.value || t.status === 'available') && (filterManager.value === 'all' || t.provider === filterManager.value) && `${t.name} ${t.install_path}`.toLowerCase().includes(search.value.toLowerCase())));
+const filteredTools = computed(() => tools.value.filter(t => (!onlyAvailable.value || t.status === 'available') && (filterManager.value === 'all' || t.provider === filterManager.value) && `${t.name} ${t.kind} ${t.provider} ${t.install_path}`.toLowerCase().includes(search.value.toLowerCase())));
 const failedQueue = computed(() => queue.value.filter(item => item.state === 'failed'));
 function packageKey(pkg: UpgradablePkg) { return `${pkg.manager}:${pkg.name}:${pkg.arch}:${pkg.repository}`; }
 function timeLabel(value: string) { return value ? new Date(value).toLocaleString('zh-CN', { hour12:false }) : '尚未检测'; }
 function canUpgradePackage(pkg: UpgradablePkg) { return automaticManagers.value.includes(pkg.manager); }
-function canUpgradeTool(tool: ToolUpdate) { return tool.status === 'available' && executableTools.value.includes(tool.id); }
+function nativeToolTarget(tool: ToolUpdate) {
+  const target = tool.native_update;
+  if (tool.kind !== 'gui' || tool.status !== 'available' || !target || !automaticManagers.value.includes(target.manager)) return;
+  const candidates = updates.value.filter(pkg => pkg.manager === target.manager && pkg.name === target.name && pkg.arch === target.arch && pkg.current_version === target.current_version && pkg.new_version === target.new_version);
+  return candidates.length === 1 ? candidates[0] : undefined;
+}
+function canUpgradeTool(tool: ToolUpdate) { return tool.kind === 'gui' ? !!nativeToolTarget(tool) : tool.status === 'available' && executableTools.value.includes(tool.id); }
 function log(message: string) { currentLog.value = message; logs.value = [...logs.value, `${new Date().toLocaleTimeString('zh-CN', {hour12:false})} ${message}`].slice(-100); }
 let pageActive = true, disposed = false;
 let unlisten: UnlistenFn|undefined, cancelMessageBox:(() => void)|undefined;
@@ -82,14 +89,36 @@ async function nativeHint(pkg: UpgradablePkg) {
   try { await pageMessageBox(() => ElMessageBox.alert(instructions[pkg.manager] ?? '请在原安装渠道核对此安装实例后更新', `${pkg.name} 更新建议`, {confirmButtonText:'关闭'})); } catch {}
 }
 function packageQueue(pkg: UpgradablePkg): QueueItem { return { id: packageKey(pkg), name: pkg.name, provider: pkg.manager, target: pkg.new_version, state:'pending', message:'', package:pkg }; }
-function toolQueue(tool: ToolUpdate): QueueItem { return { id:tool.id, name:tool.name, provider:tool.provider, target:tool.latest_version, state:'pending', message:'', tool }; }
+function toolQueue(tool: ToolUpdate): QueueItem { const pkg = nativeToolTarget(tool); return { id:tool.id, name:tool.name, provider:pkg?.manager ?? tool.provider, target:pkg?.new_version ?? tool.latest_version, state:'pending', message:'', tool, package:pkg }; }
+function uniqueQueue(items: QueueItem[]) {
+  const unique = new Map<string,QueueItem>();
+  for (const item of items) {
+    const key = item.package ? `package:${packageKey(item.package)}` : `tool:${item.id}`;
+    if (!unique.has(key) || (item.tool && !unique.get(key)?.tool)) unique.set(key,item);
+  }
+  return [...unique.values()];
+}
+function completePackage(pkg: UpgradablePkg) {
+  updates.value = updates.value.filter(candidate => packageKey(candidate) !== packageKey(pkg));
+  for (const tool of tools.value) {
+    const target = tool.native_update;
+    if (tool.kind === 'gui' && target && target.manager === pkg.manager && target.name === pkg.name && target.arch === pkg.arch && target.current_version === pkg.current_version) {
+      const confirmedTarget = target.new_version === pkg.new_version;
+      tool.current_version = confirmedTarget ? tool.latest_version : pkg.new_version;
+      tool.status = confirmedTarget ? 'current' : 'unknown';
+      tool.native_update = null;
+    }
+  }
+}
 async function runQueue(items: QueueItem[]) {
+  items = uniqueQueue(items);
   if (busy.value || !items.length) return;
+  if (items.some(item => item.tool?.kind === 'gui' && !nativeToolTarget(item.tool))) { ElMessage.warning('此 GUI 的系统候选版本尚未确认，请刷新软件源并重新检测'); return; }
   if (items.some(item => item.package && !canUpgradePackage(item.package))) { ElMessage.warning('此渠道请按原渠道更新，无法自动锁定确认版本'); return; }
   if (items.some(item => item.tool) && new Date(expiresAt.value).getTime() <= Date.now()) { ElMessage.warning('工具检测结果已超过 10 分钟，请重新检查后升级'); return; }
   try {
     await pageMessageBox(() => ElMessageBox.confirm(
-      `将依次更新 ${items.length} 个安装实例：\n${items.map(item => `${item.name} · ${providerLabels[item.provider] ?? item.provider}${item.package?.arch ? ` · ${item.package.arch}` : ''} → ${item.target}`).join('\n')}\n\n系统更新可能请求管理员授权。${items.some(item => item.provider === 'npm') ? 'npm 将通过已确认的公开原软件源执行标准安装流程，包括软件包的安装脚本。' : ''}失败会保留原因并继续后续项目；停止按钮在当前项目结束后生效。`,
+      `将依次更新 ${items.length} 个安装实例：\n${items.map(item => `${item.name} · ${providerLabels[item.provider] ?? item.provider}${item.package?.arch ? ` · ${item.package.arch}` : ''} → ${item.target}`).join('\n')}\n\n系统更新可能请求管理员授权。${items.some(item => item.tool?.kind === 'gui') ? '桌面应用更新后可能需要重新打开才能使用新版本。' : ''}${items.some(item => item.provider === 'npm') ? 'npm 将通过已确认的公开原软件源执行标准安装流程，包括软件包的安装脚本。' : ''}失败会保留原因并继续后续项目；停止按钮在当前项目结束后生效。`,
       '确认更新队列', {confirmButtonText:'开始更新',cancelButtonText:'取消',type:'info'}));
   } catch { return; }
   queue.value = items.map(item => ({...item,state:'pending',message:''}));
@@ -99,12 +128,12 @@ async function runQueue(items: QueueItem[]) {
       if (stopRequested.value) { item.state = 'skipped'; item.message = '已停止后续任务，当前安装未修改'; continue; }
       item.state = 'running'; log(`开始更新 ${item.name} · ${item.provider}`);
       try {
-        const message = item.tool
-          ? await runTask<string>('upgrade_tool',{id:item.tool.id})
-          : await runTask<string>('upgrade_software',{manager:item.package!.manager,name:item.package!.name,expectedVersion:item.package!.new_version,arch:item.package!.arch});
+        const message = item.package
+          ? await runTask<string>('upgrade_software',{manager:item.package.manager,name:item.package.name,expectedVersion:item.package.new_version,arch:item.package.arch})
+          : await runTask<string>('upgrade_tool',{id:item.tool!.id});
         item.state = 'succeeded'; item.message = message; log(message);
-        if (item.package) updates.value = updates.value.filter(pkg => packageKey(pkg) !== item.id);
-        if (item.tool) { const row = tools.value.find(tool => tool.id === item.id); if (row) { row.current_version = item.target; row.status = 'current'; } executableTools.value = executableTools.value.filter(id => id !== item.id); }
+        if (item.package) completePackage(item.package);
+        else if (item.tool) { const row = tools.value.find(tool => tool.id === item.id); if (row) { row.current_version = item.target; row.status = 'current'; } executableTools.value = executableTools.value.filter(id => id !== item.id); }
       } catch (error) { item.state = 'failed'; item.message = String(error); log(`${item.name} 更新未完成：${error}`); }
     }
   } finally {
@@ -153,17 +182,18 @@ onDeactivated(() => { pageActive = false; if (cancelMessageBox) { ElMessageBox.c
 
           <el-table-column label="操作" width="105"><template #default="{row}"><el-button v-if="canUpgradePackage(row)" size="small" :disabled="busy" @click="runQueue([packageQueue(row)])">更新此项</el-button><el-button v-else size="small" @click="nativeHint(row)">原渠道建议</el-button></template></el-table-column>
         </el-table></div>
-        <div class="tool-heading"><div class="section-heading"><h3>工具与独立软件</h3><span>{{ tools.length }} 个安装实例</span></div><el-checkbox v-model="onlyAvailable">只看有更新</el-checkbox></div>
+        <div class="tool-heading"><div class="section-heading"><h3>桌面应用与命令行工具</h3><span>{{ tools.length }} 个安装实例</span></div><el-checkbox v-model="onlyAvailable">只看有更新</el-checkbox></div>
 
-        <div class="data-table"><el-table :data="filteredTools" row-key="id" empty-text="此范围内没有工具安装实例" @selection-change="(rows: ToolUpdate[]) => selectedTools = rows">
+        <div class="data-table"><el-table :data="filteredTools" row-key="id" empty-text="此范围内没有软件安装实例" @selection-change="(rows: ToolUpdate[]) => selectedTools = rows">
           <el-table-column type="selection" width="44" :selectable="(row: ToolUpdate) => canUpgradeTool(row) && !busy" />
-          <el-table-column type="expand"><template #default="{row}"><div class="tool-details"><p><b>安装实例：</b>{{ row.install_path || '安装位置未可靠确认' }}</p><p>{{ row.note }}</p><p><b>原渠道建议：</b><code>{{ row.update_hint }}</code></p><el-button size="small" @click="copyHint(row)">复制更新方式</el-button><el-button v-if="row.source_url" size="small" @click="showSource(row)"><ExternalLink :size="13" />查看官方来源</el-button></div></template></el-table-column>
+          <el-table-column type="expand"><template #default="{row}"><div class="tool-details"><p><b>安装实例：</b>{{ row.install_path || '安装位置未可靠确认' }}</p><p v-if="row.kind === 'gui'"><b>架构：</b>{{ row.architecture || '未确认' }} · <b>发布渠道：</b>{{ row.release_channel === 'stable' ? '稳定版' : '未确认' }}</p><p>{{ row.note }}</p><p><b>原渠道建议：</b><code>{{ row.update_hint }}</code></p><el-button size="small" @click="copyHint(row)">复制更新方式</el-button><el-button v-if="row.source_url" size="small" @click="showSource(row)"><ExternalLink :size="13" />查看官方来源</el-button></div></template></el-table-column>
           <el-table-column prop="name" label="软件" min-width="130" show-overflow-tooltip />
+          <el-table-column label="类型" width="70"><template #default="{row}"><el-tag size="small" :type="row.kind === 'gui' ? 'primary' : 'info'">{{ row.kind === 'gui' ? 'GUI' : 'CLI' }}</el-tag></template></el-table-column>
           <el-table-column label="安装渠道" min-width="105"><template #default="{row}">{{ providerLabels[row.provider] ?? row.provider }}</template></el-table-column>
           <el-table-column label="当前版本" min-width="120"><template #default="{row}">{{ row.current_version || '无法确认' }}</template></el-table-column>
-          <el-table-column label="上游版本" min-width="120"><template #default="{row}">{{ row.latest_version || '未检测' }}</template></el-table-column>
+          <el-table-column label="上游版本" min-width="120"><template #default="{row}">{{ row.latest_version || (row.status === 'no-update' ? '—' : '未检测') }}</template></el-table-column>
           <el-table-column label="状态" min-width="115"><template #default="{row}"><el-tag :type="toolStatuses[row.status]?.type ?? 'info'" size="small">{{ toolStatuses[row.status]?.label ?? '需核对' }}</el-tag></template></el-table-column>
-          <el-table-column label="操作" width="110"><template #default="{row}"><el-button v-if="canUpgradeTool(row)" size="small" :disabled="busy" @click="runQueue([toolQueue(row)])">更新此项</el-button><el-button v-else size="small" @click="copyHint(row)">复制建议</el-button></template></el-table-column>
+          <el-table-column label="操作" width="110"><template #default="{row}"><el-button v-if="canUpgradeTool(row)" size="small" :disabled="busy" @click="runQueue([toolQueue(row)])">更新此项</el-button><el-button v-else-if="row.kind === 'gui' && row.status === 'available' && row.native_update" size="small" :disabled="busy" @click="refreshSources">刷新软件源</el-button><el-button v-else size="small" @click="copyHint(row)">复制建议</el-button></template></el-table-column>
         </el-table></div>
 
         <div v-if="checkedAt && !checking && !availableCount && completedChannels" class="empty-status"><span class="empty-symbol"><CircleCheck :size="34" /></span><div class="empty-title">已完成检测的渠道未发现更新</div><div class="empty-sub">{{ completedChannels }} 个渠道完成检测；其余渠道的状态见上方覆盖信息。</div></div>

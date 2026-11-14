@@ -1,5 +1,5 @@
 use crate::{
-    models::UpgradablePackage,
+    models::{SoftwareKind, ToolUpdate, UpgradablePackage},
     platform::{self, QueryCommand},
     software_updates::{NativeUpdateReport, UpdateChannel},
 };
@@ -7,6 +7,7 @@ use std::process::Command;
 
 pub fn check_with_channels(cancelled: &impl Fn() -> bool) -> NativeUpdateReport {
     let mut list = Vec::new();
+    let mut tools = Vec::new();
     let mut checked = false;
     let mut channels = Vec::new();
     let mut warnings = Vec::new();
@@ -102,7 +103,7 @@ pub fn check_with_channels(cancelled: &impl Fn() -> bool) -> NativeUpdateReport 
             channel.id.push_str(&format!(":{scope}"));
             if !cancelled() {
                 match check_flatpak_scope(&binary, scope, cancelled) {
-                    Ok(rows) => {
+                    Ok((rows, apps)) => {
                         channel.state = if rows.is_empty() {
                             "no-update"
                         } else {
@@ -113,6 +114,7 @@ pub fn check_with_channels(cancelled: &impl Fn() -> bool) -> NativeUpdateReport 
                             "{scope} 安装范围：按完整应用 ref、原 remote 和提交检测；自定义 installation 不在本轮范围"
                         );
                         list.extend(rows);
+                        tools.extend(apps);
                     }
                     Err(error) => {
                         channel.state = if cancelled() { "cancelled" } else { "failed" }.into();
@@ -138,6 +140,7 @@ pub fn check_with_channels(cancelled: &impl Fn() -> bool) -> NativeUpdateReport 
     }
     NativeUpdateReport {
         packages: list,
+        tools,
         warnings,
         channels,
     }
@@ -169,56 +172,99 @@ fn flatpak_identity(key: &str) -> Result<(&str, &str), String> {
 fn valid_commit(commit: &str) -> bool {
     commit.len() == 64 && commit.chars().all(|c| c.is_ascii_hexdigit())
 }
+pub(crate) fn flatpak_app_ref(reference: &str) -> Option<String> {
+    let reference = reference.strip_prefix("app/").unwrap_or(reference);
+    let mut parts = reference.split('/');
+    let valid = (0..3).all(|_| {
+        parts.next().is_some_and(|part| {
+            !part.is_empty()
+                && !matches!(part, "." | "..")
+                && part
+                    .bytes()
+                    .all(|c| c.is_ascii_alphanumeric() || b"._-".contains(&c))
+        })
+    });
+    (valid && parts.next().is_none()).then(|| format!("app/{reference}"))
+}
+
 fn parse_flatpak_scope(
     scope: &str,
     local: &str,
     remote: &str,
-) -> Result<Vec<UpgradablePackage>, String> {
-    let local: std::collections::HashMap<_, _> = local
-        .lines()
-        .filter_map(|line| {
-            let fields: Vec<_> = line.split('\t').collect();
-            (fields.len() == 3).then(|| ((fields[0], fields[1]), fields[2]))
-        })
-        .collect();
-    let mut rows = Vec::new();
+    mut commits: impl FnMut(&str, &str) -> Result<(String, String), String>,
+) -> Result<(Vec<UpgradablePackage>, Vec<ToolUpdate>), String> {
+    let mut offered = std::collections::HashSet::new();
     for line in remote.lines().filter(|line| !line.trim().is_empty()) {
-        let fields: Vec<_> = line.split('\t').collect();
-        if fields.len() != 3 {
-            return Err("Flatpak 软件源返回的完整身份/提交无法解析".into());
-        }
-        let key = format!("{scope}:{}", fields[0]);
-        flatpak_identity(&key)?;
-        let Some(current) = local.get(&(fields[0], fields[1])) else {
-            continue;
-        };
-        if !valid_commit(current) || !valid_commit(fields[2]) {
-            return Err("Flatpak 本地或上游提交无法可靠确认".into());
-        }
-        if *current == fields[2] {
-            continue;
-        }
-        rows.push(UpgradablePackage {
-            name: key,
-            manager: "flatpak".into(),
-            current_version: (*current).into(),
-            new_version: fields[2].into(),
-            arch: fields[0].split('/').nth(2).unwrap_or_default().into(),
-            repository: format!(
-                "{} · {} · {}",
-                scope,
-                fields[1],
-                fields[0].split('/').nth(3).unwrap_or_default()
-            ),
-        });
+        let (reference, origin) = line.split_once('\t').ok_or("Flatpak 候选缺少来源")?;
+        let reference = flatpak_app_ref(reference).ok_or("Flatpak 候选应用标识无效")?;
+        offered.insert((reference, origin));
     }
-    Ok(rows)
+    let mut packages = Vec::new();
+    let mut tools = Vec::new();
+    for line in local.lines().filter(|line| !line.trim().is_empty()) {
+        let mut fields = line.splitn(4, '\t');
+        let reference = fields
+            .next()
+            .and_then(flatpak_app_ref)
+            .ok_or("Flatpak 本地应用标识无效")?;
+        let origin = fields
+            .next()
+            .filter(|value| !value.is_empty())
+            .ok_or("Flatpak 本地应用缺少来源")?;
+        let key = format!("{scope}:{reference}");
+        flatpak_identity(&key)?;
+        let mut identity = reference.split('/').skip(1);
+        let app_id = identity.next().unwrap_or_default();
+        let arch = identity.next().unwrap_or_default();
+        let branch = identity.next().unwrap_or_default();
+        let name = fields
+            .next()
+            .filter(|value| !value.is_empty())
+            .unwrap_or(app_id);
+        let version = fields.next().unwrap_or_default();
+        let mut tool = ToolUpdate {
+            id: format!("flatpak:{key}"),
+            name: name.into(),
+            provider: "flatpak".into(),
+            kind: SoftwareKind::Gui,
+            architecture: arch.into(),
+            release_channel: branch.into(),
+            current_version: version.into(),
+            install_path: key.clone(),
+            status: "no-update".into(),
+            note: format!("安装范围 {scope} · 原软件源 {origin}"),
+            update_hint: "使用原 Flatpak 软件源检查更新".into(),
+            ..Default::default()
+        };
+        if offered.contains(&(reference.clone(), origin)) {
+            let (current, target) = commits(origin, &reference)?;
+            if !valid_commit(&current) || !valid_commit(&target) {
+                return Err("Flatpak 本地或上游提交无法可靠确认".into());
+            }
+            if current != target {
+                let package = UpgradablePackage {
+                    name: key,
+                    manager: "flatpak".into(),
+                    current_version: current,
+                    new_version: target,
+                    arch: arch.into(),
+                    repository: format!("{scope} · {origin} · {branch}"),
+                };
+                tool.latest_version = format!("提交 {}", &package.new_version[..12]);
+                tool.status = "available".into();
+                tool.native_update = Some(package.clone());
+                packages.push(package);
+            }
+        }
+        tools.push(tool);
+    }
+    Ok((packages, tools))
 }
 fn check_flatpak_scope(
     binary: &std::path::Path,
     scope: &str,
     cancelled: &impl Fn() -> bool,
-) -> Result<Vec<UpgradablePackage>, String> {
+) -> Result<(Vec<UpgradablePackage>, Vec<ToolUpdate>), String> {
     let flag = if scope == "user" {
         "--user"
     } else {
@@ -229,7 +275,7 @@ fn check_flatpak_scope(
             "list",
             flag,
             "--app",
-            "--columns=ref:full,origin:full,active:full",
+            "--columns=ref:full,origin:full,name:full,version:full",
         ])
         .env("LANG", "C")
         .query_output()
@@ -240,13 +286,16 @@ fn check_flatpak_scope(
     if cancelled() {
         return Err("读取清单后已停止，未查询此范围软件源".into());
     }
+    if local.stdout.iter().all(u8::is_ascii_whitespace) {
+        return Ok((Vec::new(), Vec::new()));
+    }
     let remote = Command::new(binary)
         .args([
             "remote-ls",
             flag,
             "--app",
             "--updates",
-            "--columns=ref:full,origin:full,commit:full",
+            "--columns=ref:full,origin:full",
         ])
         .env("LANG", "C")
         .query_output()
@@ -258,6 +307,32 @@ fn check_flatpak_scope(
         scope,
         &String::from_utf8_lossy(&local.stdout),
         &String::from_utf8_lossy(&remote.stdout),
+        |origin, reference| {
+            if cancelled() {
+                return Err("已停止 Flatpak 提交查询".into());
+            }
+            let read_commit = |args: &[&str]| -> Result<String, String> {
+                let output = Command::new(binary)
+                    .args(args)
+                    .query_output()
+                    .map_err(|_| "Flatpak 完整提交查询超时")?;
+                if !output.status.success() {
+                    return Err("Flatpak 完整提交查询失败".into());
+                }
+                Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+            };
+            Ok((
+                read_commit(&["info", flag, "--show-commit", "--", reference])?,
+                read_commit(&[
+                    "remote-info",
+                    flag,
+                    "--show-commit",
+                    "--",
+                    origin,
+                    reference,
+                ])?,
+            ))
+        },
     )
 }
 
@@ -484,21 +559,37 @@ mod tests {
         let old = "a".repeat(64);
         let new = "b".repeat(64);
         let reference = "app/org.example.App/x86_64/stable";
-        let local = format!("{reference}\tflathub\t{old}\n");
-        let remote = format!("{reference}\tflathub\t{new}\n{reference}\tother-remote\t{new}\n");
-        let user = parse_flatpak_scope("user", &local, &remote).unwrap();
-        let system = parse_flatpak_scope("system", &local, &remote).unwrap();
+        let local = "org.example.App/x86_64/stable\tflathub\tExample Editor\t1.2.3\n";
+        let remote = format!("{reference}\tflathub\n{reference}\tother-remote\n");
+        let commits = |origin: &str, target: &str| {
+            assert_eq!((origin, target), ("flathub", reference));
+            Ok((old.clone(), new.clone()))
+        };
+        let (user, apps) = parse_flatpak_scope("user", local, &remote, commits).unwrap();
+        let (system, _) = parse_flatpak_scope("system", local, &remote, commits).unwrap();
         assert_eq!(user.len(), 1);
         assert_eq!(user[0].name, format!("user:{reference}"));
         assert_ne!(user[0].name, system[0].name);
         assert_eq!(user[0].new_version, new);
+        assert_eq!(apps[0].name, "Example Editor");
+        assert_eq!(apps[0].current_version, "1.2.3");
+        assert_eq!(apps[0].native_update.as_ref().unwrap().new_version, new);
+        let (_, apps) =
+            parse_flatpak_scope("system", local, "", |_, _| panic!("no candidate")).unwrap();
+        assert_eq!(apps[0].status, "no-update");
         assert_eq!(
             flatpak_identity(&user[0].name).unwrap(),
             ("--user", reference)
         );
         assert!(
-            parse_flatpak_scope("user", &local, &format!("{reference}\tflathub\tinvalid")).is_err()
+            parse_flatpak_scope("user", local, &remote, |_, _| Ok((
+                "short".into(),
+                new.clone()
+            )))
+            .is_err()
         );
+        assert_eq!(flatpak_app_ref(reference).as_deref(), Some(reference));
+        assert!(flatpak_app_ref("runtime/org.example.App/x86_64/stable").is_none());
         for name in [
             "org.example.App",
             "user:app/org.example.App",

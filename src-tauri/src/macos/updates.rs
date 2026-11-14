@@ -52,6 +52,7 @@ pub fn check_with_channels(cancelled: &impl Fn() -> bool) -> NativeUpdateReport 
         };
         return NativeUpdateReport {
             packages: vec![],
+            tools: vec![],
             warnings: vec![],
             channels: vec![UpdateChannel::new(
                 "brew",
@@ -80,12 +81,14 @@ pub fn check_with_channels(cancelled: &impl Fn() -> bool) -> NativeUpdateReport 
                 .collect();
             NativeUpdateReport {
                 packages: rows,
+                tools: vec![],
                 warnings: vec![],
                 channels,
             }
         }
         Err(error) => NativeUpdateReport {
             packages: vec![],
+            tools: vec![],
             warnings: vec![error.clone()],
             channels: vec![UpdateChannel::new(
                 "brew",

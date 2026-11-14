@@ -1,4 +1,5 @@
 //! Read-only update providers. The registry never supplies executable update scripts.
+mod gui;
 use crate::{
     models::{ToolUpdate, UpgradablePackage},
     platform::{self, QueryCommand},
@@ -42,6 +43,7 @@ impl UpdateChannel {
 }
 pub struct NativeUpdateReport {
     pub packages: Vec<UpgradablePackage>,
+    pub tools: Vec<ToolUpdate>,
     pub warnings: Vec<String>,
     pub channels: Vec<UpdateChannel>,
 }
@@ -103,11 +105,21 @@ fn remove_completed_package(
     {
         return;
     }
-    report.packages.retain(|package| {
-        !(package.manager == manager
+    let matches = |package: &UpgradablePackage| {
+        package.manager == manager
             && package.name == name
-            && arch.is_none_or(|arch| package.arch == arch))
-    });
+            && arch.is_none_or(|arch| package.arch == arch)
+    };
+    let completed: Vec<_> = report
+        .packages
+        .iter()
+        .filter(|package| matches(package))
+        .cloned()
+        .collect();
+    report.packages.retain(|package| !matches(package));
+    for package in completed {
+        gui::record_native_success(&mut report.tools, &package);
+    }
 }
 pub fn record_native_success_scoped(manager: &str, name: &str, arch: Option<&str>) {
     if let Ok(mut recent) = RECENT.get_or_init(Mutex::default).lock()
@@ -268,6 +280,19 @@ fn remote_json(url: &str) -> Result<Value, String> {
     {
         return Ok(data.clone());
     }
+    let body = fetch_metadata(url, true)?;
+    let data: Value =
+        serde_json::from_slice(&body).map_err(|_| "软件源返回数据无法解析".to_string())?;
+    CACHE
+        .get_or_init(Mutex::default)
+        .lock()
+        .map_err(|e| e.to_string())?
+        .insert(url.into(), (Instant::now(), data.clone()));
+    Ok(data)
+}
+
+// Callers validate their own source allowlist before using this bounded, read-only transport.
+pub(crate) fn fetch_metadata(url: &str, follow_redirects: bool) -> Result<Vec<u8>, String> {
     let curl = platform::command_path("curl").ok_or("未找到 curl，无法查询软件源")?;
     let output = Command::new(curl)
         .args([
@@ -276,6 +301,8 @@ fn remote_json(url: &str) -> Result<Value, String> {
             "--silent",
             "--show-error",
             "--location",
+            "--max-redirs",
+            if follow_redirects { "3" } else { "0" },
             "--proto",
             "=https",
             "--proto-redir",
@@ -313,14 +340,7 @@ fn remote_json(url: &str) -> Result<Value, String> {
             output.status.code()
         ));
     }
-    let data: Value =
-        serde_json::from_slice(body).map_err(|_| "软件源返回数据无法解析".to_string())?;
-    CACHE
-        .get_or_init(Mutex::default)
-        .lock()
-        .map_err(|e| e.to_string())?
-        .insert(url.into(), (Instant::now(), data.clone()));
-    Ok(data)
+    Ok(body.to_vec())
 }
 fn version(value: &str) -> Option<semver::Version> {
     let value = value.trim().trim_start_matches('v');
@@ -992,6 +1012,15 @@ fn registry_tools(cancelled: &dyn Fn() -> bool) -> ProviderResult {
             ));
             continue;
         };
+        if rule.id == "codex" && gui::is_gui_binary(&binary) {
+            result.channels.push(UpdateChannel::new(
+                &rule.provider,
+                "unsupported",
+                "codex 命令指向 GUI 入口；Codex CLI 需独立安装，GUI 单独检测",
+                Some(&binary),
+            ));
+            continue;
+        }
         if cancelled() {
             result.channels.push(UpdateChannel::new(
                 &rule.provider,
@@ -1084,7 +1113,11 @@ fn release_check(row: &mut ToolUpdate, rule: &Rule, binary: &Path) -> Result<(),
     if !output.status.success() {
         return Err("读取本地版本失败".into());
     }
-    row.current_version = String::from_utf8_lossy(&output.stdout)
+    let text = String::from_utf8_lossy(&output.stdout);
+    if rule.id == "codex" && !text.trim_start().starts_with("codex-cli ") {
+        return Err("命令未返回 Codex CLI 版本标识；不将 GUI 版本作为 CLI 版本".into());
+    }
+    row.current_version = text
         .split_whitespace()
         .find(|token| version(token).is_some())
         .unwrap_or("")
@@ -1116,6 +1149,7 @@ pub fn check_with_progress(
     let native = crate::updates::check_with_channels(&cancelled);
     let mut report = UpdateCheckReport {
         packages: native.packages,
+        tools: native.tools,
         warnings: native.warnings,
         channels: native.channels,
         checked_at: checked_at.to_rfc3339(),
@@ -1152,6 +1186,10 @@ pub fn check_with_progress(
             python_tools as fn(&dyn Fn() -> bool) -> ProviderResult,
         ),
         (
+            "检测 Codex GUI 安装实例与官方更新源",
+            gui::check as fn(&dyn Fn() -> bool) -> ProviderResult,
+        ),
+        (
             "核对独立安装与官方源码渠道",
             registry_tools as fn(&dyn Fn() -> bool) -> ProviderResult,
         ),
@@ -1164,6 +1202,41 @@ pub fn check_with_progress(
         for permission in result.permissions {
             report.executable_tools.push(permission.id.clone());
             permissions.insert(permission.id.clone(), permission);
+        }
+    }
+    #[cfg(target_os = "linux")]
+    {
+        progress("匹配 APT 候选与桌面应用", report.channels.len() as u64);
+        for (index, name, binary) in
+            crate::packages::apt_desktop_candidates(&report.packages, &cancelled)
+        {
+            let package = &report.packages[index];
+            if report.tools.iter().any(|tool| {
+                tool.kind == crate::models::SoftwareKind::Gui
+                    && (Path::new(&tool.install_path) == binary
+                        || tool.native_update.as_ref().is_some_and(|target| {
+                            target.manager == package.manager
+                                && target.name == package.name
+                                && target.arch == package.arch
+                        }))
+            }) {
+                continue;
+            }
+            report.tools.push(ToolUpdate {
+                id: instance_id("apt-gui", &format!("{}:{}", package.name, package.arch)),
+                name,
+                provider: package.manager.clone(),
+                kind: crate::models::SoftwareKind::Gui,
+                current_version: package.current_version.clone(),
+                latest_version: package.new_version.clone(),
+                architecture: package.arch.clone(),
+                status: "available".into(),
+                install_path: binary.to_string_lossy().into_owned(),
+                native_update: Some(package.clone()),
+                update_hint: "通过原 APT 软件源更新此应用".into(),
+                note: "通过桌面入口的文件归属匹配本机 APT 候选版本".into(),
+                ..Default::default()
+            });
         }
     }
     report.tools.sort_by(|a, b| {

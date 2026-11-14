@@ -1,0 +1,1510 @@
+{
+  "schema_version": 1,
+  "collected_on": "2026-11-06",
+  "scope": "Linux 与 macOS 常用桌面软件，优先开发工具、浏览器、办公通信、安全和影音工具。",
+  "policy": "仅收录厂商官方域名或其官方发行仓库；收录不等于已接入检测。下载页与发行页不冒充机器 API；不从这些地址下载安装或执行代码。",
+  "sources": [
+    {
+      "id": "codex-gui",
+      "name": "Codex GUI / ChatGPT 桌面版（含 Codex）",
+      "category": "development",
+      "platforms": [
+        "linux",
+        "macos"
+      ],
+      "source_type": "appcast-and-repository",
+      "official_url": "https://persistent.oaistatic.com/codex-app-prod/appcast.xml",
+      "notes": "macOS 按应用架构选择 Appcast；Linux 按 DEB/RPM/Arch 及架构查询官方仓库。独立或第三方重新打包的 Linux Codex 不与官方版本直接比较。",
+      "implemented": true,
+      "official_docs": [
+        "https://developers.openai.com/codex/app",
+        "https://learn.chatgpt.com/docs/linux/linux-app"
+      ],
+      "endpoints": [
+        {
+          "platform": "macos",
+          "architecture": "arm64",
+          "channel": "stable",
+          "format": "sparkle",
+          "url": "https://persistent.oaistatic.com/codex-app-prod/appcast.xml",
+          "verification": {
+            "status": "verified",
+            "checked_on": "2026-11-06",
+            "method": "production-parser-live-probe",
+            "detail": "已通过实际检测器只读访问并解析；不下载安装包。"
+          }
+        },
+        {
+          "platform": "macos",
+          "architecture": "x64",
+          "channel": "stable",
+          "format": "sparkle",
+          "url": "https://persistent.oaistatic.com/codex-app-prod/appcast-x64.xml",
+          "verification": {
+            "status": "verified",
+            "checked_on": "2026-11-06",
+            "method": "production-parser-live-probe",
+            "detail": "已通过实际检测器只读访问并解析；不下载安装包。"
+          }
+        },
+        {
+          "platform": "linux",
+          "architecture": "amd64",
+          "channel": "stable",
+          "format": "deb-packages",
+          "url": "https://persistent.oaistatic.com/codex-app-prod/linux/deb/dists/stable/main/binary-amd64/Packages",
+          "verification": {
+            "status": "verified",
+            "checked_on": "2026-11-06",
+            "method": "production-parser-live-probe",
+            "detail": "已通过实际检测器只读访问并解析；不下载安装包。"
+          }
+        },
+        {
+          "platform": "linux",
+          "architecture": "arm64",
+          "channel": "stable",
+          "format": "deb-packages",
+          "url": "https://persistent.oaistatic.com/codex-app-prod/linux/deb/dists/stable/main/binary-arm64/Packages",
+          "verification": {
+            "status": "verified",
+            "checked_on": "2026-11-06",
+            "method": "production-parser-live-probe",
+            "detail": "已通过实际检测器只读访问并解析；不下载安装包。"
+          }
+        },
+        {
+          "platform": "linux",
+          "architecture": "x86_64",
+          "channel": "stable",
+          "format": "rpm-repomd",
+          "url": "https://persistent.oaistatic.com/codex-app-prod/linux/rpm/x86_64/repodata/repomd.xml",
+          "verification": {
+            "status": "verified",
+            "checked_on": "2026-11-06",
+            "method": "production-parser-live-probe",
+            "detail": "已通过实际检测器只读访问并解析；不下载安装包。"
+          }
+        },
+        {
+          "platform": "linux",
+          "architecture": "aarch64",
+          "channel": "stable",
+          "format": "rpm-repomd",
+          "url": "https://persistent.oaistatic.com/codex-app-prod/linux/rpm/aarch64/repodata/repomd.xml",
+          "verification": {
+            "status": "verified",
+            "checked_on": "2026-11-06",
+            "method": "production-parser-live-probe",
+            "detail": "已通过实际检测器只读访问并解析；不下载安装包。"
+          }
+        },
+        {
+          "platform": "linux",
+          "architecture": "x86_64",
+          "channel": "stable",
+          "format": "arch-db-gzip",
+          "url": "https://persistent.oaistatic.com/codex-app-prod/linux/arch/x86_64/openai-chatgpt.db",
+          "verification": {
+            "status": "verified",
+            "checked_on": "2026-11-06",
+            "method": "production-parser-live-probe",
+            "detail": "已通过实际检测器只读访问并解析；不下载安装包。"
+          }
+        },
+        {
+          "platform": "linux",
+          "architecture": "aarch64",
+          "channel": "stable",
+          "format": "arch-db-gzip",
+          "url": "https://persistent.oaistatic.com/codex-app-prod/linux/arch/aarch64/openai-chatgpt.db",
+          "verification": {
+            "status": "verified",
+            "checked_on": "2026-11-06",
+            "method": "production-parser-live-probe",
+            "detail": "已通过实际检测器只读访问并解析；不下载安装包。"
+          }
+        }
+      ],
+      "verification": {
+        "status": "verified",
+        "checked_on": "2026-11-06",
+        "final_url": "https://persistent.oaistatic.com/codex-app-prod/appcast.xml",
+        "content_type": "application/xml",
+        "truncated": false,
+        "shape": null,
+        "detail": ""
+      }
+    },
+    {
+      "id": "vscode",
+      "name": "Visual Studio Code",
+      "category": "development",
+      "platforms": [
+        "linux",
+        "macos"
+      ],
+      "source_type": "json",
+      "official_url": "https://update.code.visualstudio.com/api/update/linux-x64/stable/latest",
+      "notes": "productVersion 是用户版本，version 是提交号。平台可用 linux-x64、linux-arm64、darwin、darwin-arm64；Stable 与 Insiders 分开。",
+      "implemented": false,
+      "endpoint_template": "https://update.code.visualstudio.com/api/update/{platform}/{channel}/latest",
+      "version_field": "productVersion",
+      "verification": {
+        "status": "verified",
+        "checked_on": "2026-11-06",
+        "final_url": "https://update.code.visualstudio.com/api/update/linux-x64/stable/latest",
+        "content_type": "application/json; charset=utf-8",
+        "truncated": false,
+        "shape": [
+          "url",
+          "name",
+          "version",
+          "productVersion",
+          "hash",
+          "timestamp",
+          "sha256hash",
+          "supportsFastUpdate",
+          "notes"
+        ],
+        "detail": ""
+      }
+    },
+    {
+      "id": "cursor",
+      "name": "Cursor",
+      "category": "development",
+      "platforms": [
+        "linux",
+        "macos"
+      ],
+      "source_type": "download-page",
+      "official_url": "https://cursor.com/download",
+      "notes": "保留官方 Linux/macOS 下载页；未确认公开稳定的机器更新 API，不使用猜测的客户端接口。",
+      "implemented": false,
+      "official_docs": [
+        "https://cursor.com/download"
+      ],
+      "verification": {
+        "status": "verified",
+        "checked_on": "2026-11-06",
+        "final_url": "https://cursor.com/download",
+        "content_type": "text/html",
+        "truncated": false,
+        "detail": "通过实际浏览器渲染核实，包含桌面稳定版发行列表、Linux/macOS 的 x64/ARM64 下载项。"
+      }
+    },
+    {
+      "id": "claude-desktop",
+      "name": "Claude Desktop",
+      "category": "development",
+      "platforms": [
+        "macos"
+      ],
+      "source_type": "json",
+      "official_url": "https://downloads.claude.ai/releases/darwin/universal/RELEASES.json",
+      "notes": "仅记录 macOS 官方桌面发行，不把 Claude Code CLI 或非官方 Linux 客户端混入。",
+      "implemented": false,
+      "verification": {
+        "status": "verified",
+        "checked_on": "2026-11-06",
+        "final_url": "https://downloads.claude.ai/releases/darwin/universal/RELEASES.json",
+        "content_type": "application/json",
+        "truncated": false,
+        "shape": [
+          "currentRelease",
+          "releases"
+        ],
+        "detail": ""
+      }
+    },
+    {
+      "id": "windsurf",
+      "name": "Windsurf",
+      "category": "development",
+      "platforms": [
+        "linux",
+        "macos"
+      ],
+      "source_type": "json",
+      "official_url": "https://windsurf-stable.codeium.com/api/update/linux-x64/stable/latest",
+      "notes": "逐平台验证后使用；失败时以官方发布页为准。",
+      "implemented": false,
+      "official_docs": [
+        "https://windsurf.com/editor/releases"
+      ],
+      "verification": {
+        "status": "verified",
+        "checked_on": "2026-11-06",
+        "final_url": "https://windsurf-stable.codeium.com/api/update/linux-x64/stable/latest",
+        "content_type": "application/json",
+        "truncated": false,
+        "shape": [
+          "url",
+          "name",
+          "notes",
+          "version",
+          "productVersion",
+          "hash",
+          "timestamp",
+          "sha256hash",
+          "supportsFastUpdate",
+          "windsurfVersion",
+          "displayName"
+        ],
+        "detail": ""
+      }
+    },
+    {
+      "id": "antigravity",
+      "name": "Google Antigravity",
+      "category": "development",
+      "platforms": [
+        "linux",
+        "macos"
+      ],
+      "source_type": "download-page",
+      "official_url": "https://antigravity.google/download",
+      "notes": "仅记录官方入口；未确认通用稳定更新 API。",
+      "implemented": false,
+      "verification": {
+        "status": "verified",
+        "checked_on": "2026-11-06",
+        "final_url": "https://antigravity.google/download",
+        "content_type": "text/html",
+        "truncated": false,
+        "shape": null,
+        "detail": ""
+      }
+    },
+    {
+      "id": "jetbrains",
+      "name": "JetBrains Toolbox / IntelliJ IDEA / PyCharm / WebStorm / Rider / GoLand / CLion / DataGrip",
+      "category": "development",
+      "platforms": [
+        "linux",
+        "macos"
+      ],
+      "source_type": "json",
+      "official_url": "https://data.services.jetbrains.com/products/releases?code=IIU&latest=true&type=release",
+      "notes": "本次核实 IDEA 的 IIU 入口；其他产品替换 code 参数后需核实。Toolbox=TBA，PyCharm=PCP，WebStorm=WS，Rider=RD，GoLand=GO，CLion=CL，DataGrip=DG。不要把 EAP 当稳定版。",
+      "implemented": false,
+      "endpoint_template": "https://data.services.jetbrains.com/products/releases?code={product_code}&latest=true&type=release",
+      "verification": {
+        "status": "verified",
+        "checked_on": "2026-11-06",
+        "final_url": "https://data.services.jetbrains.com/products/releases?code=IIU&latest=true&type=release",
+        "content_type": "application/json;charset=UTF-8",
+        "truncated": false,
+        "shape": [
+          "IIU"
+        ],
+        "detail": ""
+      }
+    },
+    {
+      "id": "docker-desktop",
+      "name": "Docker Desktop",
+      "category": "development",
+      "platforms": [
+        "linux",
+        "macos"
+      ],
+      "source_type": "sparkle",
+      "official_url": "https://desktop.docker.com/mac/main/arm64/appcast.xml",
+      "notes": "当前入口仅为 macOS ARM64；Linux 单独使用官方发行说明与原包仓库，不套用 macOS 清单。",
+      "implemented": false,
+      "official_docs": [
+        "https://docs.docker.com/desktop/release-notes/"
+      ],
+      "verification": {
+        "status": "verified",
+        "checked_on": "2026-11-06",
+        "final_url": "https://desktop.docker.com/mac/main/arm64/appcast.xml",
+        "content_type": "application/xml; charset=utf-8",
+        "truncated": false,
+        "shape": null,
+        "detail": ""
+      }
+    },
+    {
+      "id": "github-desktop",
+      "name": "GitHub Desktop",
+      "category": "development",
+      "platforms": [
+        "macos"
+      ],
+      "source_type": "github-releases",
+      "official_url": "https://api.github.com/repos/desktop/desktop/releases/latest",
+      "notes": "官方 macOS 发行；Linux 社区移植单独归类。",
+      "implemented": false,
+      "verification": {
+        "status": "verified",
+        "checked_on": "2026-11-06",
+        "final_url": "https://api.github.com/repos/desktop/desktop/releases/latest",
+        "content_type": "application/json; charset=utf-8",
+        "truncated": false,
+        "shape": [
+          "url",
+          "assets_url",
+          "upload_url",
+          "html_url",
+          "id",
+          "author",
+          "node_id",
+          "tag_name",
+          "target_commitish",
+          "name",
+          "draft",
+          "immutable",
+          "prerelease",
+          "created_at",
+          "updated_at"
+        ],
+        "detail": ""
+      }
+    },
+    {
+      "id": "zed",
+      "name": "Zed",
+      "category": "development",
+      "platforms": [
+        "linux",
+        "macos"
+      ],
+      "source_type": "github-releases",
+      "official_url": "https://api.github.com/repos/zed-industries/zed/releases/latest",
+      "notes": "稳定版与 Preview 分开，按 release assets 的系统和架构筛选。",
+      "implemented": false,
+      "verification": {
+        "status": "verified",
+        "checked_on": "2026-11-06",
+        "final_url": "https://api.github.com/repos/zed-industries/zed/releases/latest",
+        "content_type": "application/json; charset=utf-8",
+        "truncated": false,
+        "shape": [
+          "url",
+          "assets_url",
+          "upload_url",
+          "html_url",
+          "id",
+          "author",
+          "node_id",
+          "tag_name",
+          "target_commitish",
+          "name",
+          "draft",
+          "immutable",
+          "prerelease",
+          "created_at",
+          "updated_at"
+        ],
+        "detail": ""
+      }
+    },
+    {
+      "id": "sublime-text",
+      "name": "Sublime Text",
+      "category": "development",
+      "platforms": [
+        "linux",
+        "macos"
+      ],
+      "source_type": "download-page",
+      "official_url": "https://www.sublimetext.com/download",
+      "notes": "官方稳定版下载页包含完整 Changelog 和 Linux/macOS 下载项；按 build 比较，Dev Builds 单独处理。",
+      "implemented": false,
+      "official_docs": [
+        "https://www.sublimetext.com/download"
+      ],
+      "verification": {
+        "status": "verified",
+        "checked_on": "2026-11-06",
+        "final_url": "https://www.sublimetext.com/download",
+        "content_type": "text/html",
+        "truncated": false,
+        "detail": "官方页面包含稳定版 Build 4215、Changelog 及 Linux/macOS 入口。"
+      }
+    },
+    {
+      "id": "postman",
+      "name": "Postman",
+      "category": "development",
+      "platforms": [
+        "linux",
+        "macos"
+      ],
+      "source_type": "release-page",
+      "official_url": "https://www.postman.com/downloads/release-notes/",
+      "notes": "官方发行说明；当前未收录经核实的机器可读更新接口。",
+      "implemented": false,
+      "verification": {
+        "status": "verified",
+        "checked_on": "2026-11-06",
+        "final_url": "https://www.postman.com/release-notes/",
+        "content_type": "text/markdown; charset=utf-8",
+        "truncated": false,
+        "shape": null,
+        "detail": ""
+      }
+    },
+    {
+      "id": "insomnia",
+      "name": "Insomnia",
+      "category": "development",
+      "platforms": [
+        "linux",
+        "macos"
+      ],
+      "source_type": "github-releases",
+      "official_url": "https://api.github.com/repos/Kong/insomnia/releases/latest",
+      "notes": "",
+      "implemented": false,
+      "verification": {
+        "status": "verified",
+        "checked_on": "2026-11-06",
+        "final_url": "https://api.github.com/repos/Kong/insomnia/releases/latest",
+        "content_type": "application/json; charset=utf-8",
+        "truncated": false,
+        "shape": [
+          "url",
+          "assets_url",
+          "upload_url",
+          "html_url",
+          "id",
+          "author",
+          "node_id",
+          "tag_name",
+          "target_commitish",
+          "name",
+          "draft",
+          "immutable",
+          "prerelease",
+          "created_at",
+          "updated_at"
+        ],
+        "detail": ""
+      }
+    },
+    {
+      "id": "dbeaver",
+      "name": "DBeaver Community",
+      "category": "development",
+      "platforms": [
+        "linux",
+        "macos"
+      ],
+      "source_type": "github-releases",
+      "official_url": "https://api.github.com/repos/dbeaver/dbeaver/releases/latest",
+      "notes": "Community 与付费产品分开。",
+      "implemented": false,
+      "verification": {
+        "status": "verified",
+        "checked_on": "2026-11-06",
+        "final_url": "https://api.github.com/repos/dbeaver/dbeaver/releases/latest",
+        "content_type": "application/json; charset=utf-8",
+        "truncated": false,
+        "shape": [
+          "url",
+          "assets_url",
+          "upload_url",
+          "html_url",
+          "id",
+          "author",
+          "node_id",
+          "tag_name",
+          "target_commitish",
+          "name",
+          "draft",
+          "immutable",
+          "prerelease",
+          "created_at",
+          "updated_at"
+        ],
+        "detail": ""
+      }
+    },
+    {
+      "id": "tableplus",
+      "name": "TablePlus",
+      "category": "development",
+      "platforms": [
+        "linux",
+        "macos"
+      ],
+      "source_type": "download-page",
+      "official_url": "https://tableplus.com/download",
+      "notes": "macOS 与 Linux 分别发行；未确认机器接口前不合并版本。",
+      "implemented": false,
+      "verification": {
+        "status": "verified",
+        "checked_on": "2026-11-06",
+        "final_url": "https://tableplus.com/download/",
+        "content_type": "text/markdown; charset=utf-8",
+        "truncated": false,
+        "shape": null,
+        "detail": ""
+      }
+    },
+    {
+      "id": "chrome",
+      "name": "Google Chrome",
+      "category": "browser",
+      "platforms": [
+        "linux",
+        "macos"
+      ],
+      "source_type": "json",
+      "official_url": "https://versionhistory.googleapis.com/v1/chrome/platforms/linux/channels/stable/versions",
+      "notes": "版本历史 API；macOS 使用 mac 或 mac_arm64 平台。此 API 是上游发行历史，不代表本机渠道/灰度必然可升级。",
+      "implemented": false,
+      "official_docs": [
+        "https://developer.chrome.com/docs/web-platform/versionhistory/reference"
+      ],
+      "version_field": "versions[].version",
+      "verification": {
+        "status": "verified",
+        "checked_on": "2026-11-06",
+        "final_url": "https://versionhistory.googleapis.com/v1/chrome/platforms/linux/channels/stable/versions",
+        "content_type": "application/json; charset=UTF-8",
+        "truncated": false,
+        "shape": [
+          "versions",
+          "nextPageToken"
+        ],
+        "detail": ""
+      }
+    },
+    {
+      "id": "firefox",
+      "name": "Mozilla Firefox",
+      "category": "browser",
+      "platforms": [
+        "linux",
+        "macos"
+      ],
+      "source_type": "json",
+      "official_url": "https://product-details.mozilla.org/1.0/firefox_versions.json",
+      "notes": "LATEST_FIREFOX_VERSION 与 ESR、Beta、Nightly 字段分开。",
+      "implemented": false,
+      "version_field": "LATEST_FIREFOX_VERSION",
+      "verification": {
+        "status": "verified",
+        "checked_on": "2026-11-06",
+        "final_url": "https://product-details.mozilla.org/1.0/firefox_versions.json",
+        "content_type": "application/json",
+        "truncated": false,
+        "shape": [
+          "FIREFOX_AURORA",
+          "FIREFOX_DEVEDITION",
+          "FIREFOX_ESR",
+          "FIREFOX_ESR115",
+          "FIREFOX_ESR_NEXT",
+          "FIREFOX_NIGHTLY",
+          "LAST_MERGE_DATE",
+          "LAST_RELEASE_DATE",
+          "LAST_STRINGFREEZE_DATE",
+          "LATEST_FIREFOX_DEVEL_VERSION",
+          "LATEST_FIREFOX_OLDER_VERSION",
+          "LATEST_FIREFOX_RELEASED_DEVEL_VERSION",
+          "LATEST_FIREFOX_VERSION",
+          "NEXT_MERGE_DATE",
+          "NEXT_RELEASE_DATE"
+        ],
+        "detail": ""
+      }
+    },
+    {
+      "id": "edge",
+      "name": "Microsoft Edge",
+      "category": "browser",
+      "platforms": [
+        "linux",
+        "macos"
+      ],
+      "source_type": "json",
+      "official_url": "https://edgeupdates.microsoft.com/api/products?view=enterprise",
+      "notes": "按 Product=Stable、Platform、Architecture 筛选 Releases。",
+      "implemented": false,
+      "verification": {
+        "status": "verified",
+        "checked_on": "2026-11-06",
+        "final_url": "https://edgeupdates.microsoft.com/api/products?view=enterprise",
+        "content_type": "application/json; charset=utf-8",
+        "truncated": false,
+        "shape": {
+          "type": "array",
+          "length": 5
+        },
+        "detail": ""
+      }
+    },
+    {
+      "id": "brave",
+      "name": "Brave Browser",
+      "category": "browser",
+      "platforms": [
+        "linux",
+        "macos"
+      ],
+      "source_type": "github-releases",
+      "official_url": "https://api.github.com/repos/brave/brave-browser/releases/latest",
+      "notes": "Stable、Beta、Nightly 属于不同发行渠道。",
+      "implemented": false,
+      "verification": {
+        "status": "verified",
+        "checked_on": "2026-11-06",
+        "final_url": "https://api.github.com/repos/brave/brave-browser/releases/latest",
+        "content_type": "application/json; charset=utf-8",
+        "truncated": false,
+        "shape": [
+          "url",
+          "assets_url",
+          "upload_url",
+          "html_url",
+          "id",
+          "author",
+          "node_id",
+          "tag_name",
+          "target_commitish",
+          "name",
+          "draft",
+          "immutable",
+          "prerelease",
+          "created_at",
+          "updated_at"
+        ],
+        "detail": ""
+      }
+    },
+    {
+      "id": "vivaldi",
+      "name": "Vivaldi",
+      "category": "browser",
+      "platforms": [
+        "linux",
+        "macos"
+      ],
+      "source_type": "release-page",
+      "official_url": "https://vivaldi.com/blog/desktop/",
+      "notes": "Stable 与 Snapshot 分开；此处是官方网页，不承诺统一 API。",
+      "implemented": false,
+      "verification": {
+        "status": "verified",
+        "checked_on": "2026-11-06",
+        "final_url": "https://vivaldi.com/blog/desktop/",
+        "content_type": "text/html; charset=UTF-8",
+        "truncated": false,
+        "shape": null,
+        "detail": ""
+      }
+    },
+    {
+      "id": "opera",
+      "name": "Opera",
+      "category": "browser",
+      "platforms": [
+        "linux",
+        "macos"
+      ],
+      "source_type": "release-page",
+      "official_url": "https://blogs.opera.com/desktop/",
+      "notes": "按桌面 Stable、Beta、Developer 分类筛选，不从下载重定向推测版本。",
+      "implemented": false,
+      "verification": {
+        "status": "verified",
+        "checked_on": "2026-11-06",
+        "final_url": "https://blogs.opera.com/desktop/",
+        "content_type": "text/html; charset=UTF-8",
+        "truncated": false,
+        "shape": null,
+        "detail": ""
+      }
+    },
+    {
+      "id": "arc",
+      "name": "Arc",
+      "category": "browser",
+      "platforms": [
+        "macos"
+      ],
+      "source_type": "download-page",
+      "official_url": "https://arc.net/",
+      "notes": "保留官方入口；Appcast 访问受限，未将其作为可用机器接口收录。",
+      "implemented": false,
+      "verification": {
+        "status": "unconfirmed",
+        "checked_on": "2026-11-06",
+        "final_url": "https://arc.net/",
+        "content_type": "",
+        "truncated": false,
+        "shape": null,
+        "detail": "官方入口请求返回 HTTP 403；待复核，不作为可自动检测接口。"
+      }
+    },
+    {
+      "id": "obsidian",
+      "name": "Obsidian",
+      "category": "productivity",
+      "platforms": [
+        "linux",
+        "macos"
+      ],
+      "source_type": "github-releases",
+      "official_url": "https://api.github.com/repos/obsidianmd/obsidian-releases/releases/latest",
+      "notes": "桌面安装器版本与应用内自动更新版本可能不同，Catalyst 预览需单独处理。",
+      "implemented": false,
+      "verification": {
+        "status": "verified",
+        "checked_on": "2026-11-06",
+        "final_url": "https://api.github.com/repos/obsidianmd/obsidian-releases/releases/latest",
+        "content_type": "application/json; charset=utf-8",
+        "truncated": false,
+        "shape": [
+          "url",
+          "assets_url",
+          "upload_url",
+          "html_url",
+          "id",
+          "author",
+          "node_id",
+          "tag_name",
+          "target_commitish",
+          "name",
+          "draft",
+          "immutable",
+          "prerelease",
+          "created_at",
+          "updated_at"
+        ],
+        "detail": ""
+      }
+    },
+    {
+      "id": "notion",
+      "name": "Notion",
+      "category": "productivity",
+      "platforms": [
+        "macos"
+      ],
+      "source_type": "download-page",
+      "official_url": "https://www.notion.com/desktop",
+      "notes": "仅记录官方桌面版，不包含非官方 Linux 封装。",
+      "implemented": false,
+      "verification": {
+        "status": "verified",
+        "checked_on": "2026-11-06",
+        "final_url": "https://www.notion.com/desktop",
+        "content_type": "text/html; charset=utf-8",
+        "truncated": false,
+        "shape": null,
+        "detail": ""
+      }
+    },
+    {
+      "id": "slack",
+      "name": "Slack",
+      "category": "communication",
+      "platforms": [
+        "linux",
+        "macos"
+      ],
+      "source_type": "release-page",
+      "official_url": "https://slack.com/release-notes/mac",
+      "notes": "本次使用官方发行说明；未确认可访问的机器更新清单。Linux 应按官方 DEB/RPM 包源检测。",
+      "implemented": false,
+      "official_docs": [
+        "https://slack.com/downloads/linux"
+      ],
+      "verification": {
+        "status": "verified",
+        "checked_on": "2026-11-06",
+        "final_url": "https://slack.com/downloads/mac",
+        "content_type": "text/html; charset=utf-8",
+        "truncated": false,
+        "shape": null,
+        "detail": ""
+      }
+    },
+    {
+      "id": "discord",
+      "name": "Discord",
+      "category": "communication",
+      "platforms": [
+        "linux",
+        "macos"
+      ],
+      "source_type": "download-page",
+      "official_url": "https://discord.com/download",
+      "notes": "Stable、PTB、Canary 分开。当前保留官方入口，不承诺接口稳定。",
+      "implemented": false,
+      "verification": {
+        "status": "verified",
+        "checked_on": "2026-11-06",
+        "final_url": "https://discord.com/download",
+        "content_type": "text/html; charset=utf-8",
+        "truncated": false,
+        "shape": null,
+        "detail": ""
+      }
+    },
+    {
+      "id": "telegram",
+      "name": "Telegram Desktop",
+      "category": "communication",
+      "platforms": [
+        "linux",
+        "macos"
+      ],
+      "source_type": "github-releases",
+      "official_url": "https://api.github.com/repos/telegramdesktop/tdesktop/releases/latest",
+      "notes": "对应跨平台 Telegram Desktop；macOS 原生 Telegram 是不同客户端。",
+      "implemented": false,
+      "verification": {
+        "status": "verified",
+        "checked_on": "2026-11-06",
+        "final_url": "https://api.github.com/repos/telegramdesktop/tdesktop/releases/latest",
+        "content_type": "application/json; charset=utf-8",
+        "truncated": false,
+        "shape": [
+          "url",
+          "assets_url",
+          "upload_url",
+          "html_url",
+          "id",
+          "author",
+          "node_id",
+          "tag_name",
+          "target_commitish",
+          "name",
+          "draft",
+          "immutable",
+          "prerelease",
+          "created_at",
+          "updated_at"
+        ],
+        "detail": ""
+      }
+    },
+    {
+      "id": "signal",
+      "name": "Signal Desktop",
+      "category": "communication",
+      "platforms": [
+        "linux",
+        "macos"
+      ],
+      "source_type": "yaml",
+      "official_url": "https://updates.signal.org/desktop/latest-mac.yml",
+      "notes": "此清单用于 macOS；Linux 使用官方 APT 软件源。",
+      "implemented": false,
+      "official_docs": [
+        "https://signal.org/download/"
+      ],
+      "verification": {
+        "status": "verified",
+        "checked_on": "2026-11-06",
+        "final_url": "https://updates.signal.org/desktop/latest-mac.yml",
+        "content_type": "application/yaml",
+        "truncated": false,
+        "shape": null,
+        "detail": ""
+      }
+    },
+    {
+      "id": "zoom",
+      "name": "Zoom Workplace",
+      "category": "communication",
+      "platforms": [
+        "linux",
+        "macos"
+      ],
+      "source_type": "download-page",
+      "official_url": "https://www.zoom.com/en/download",
+      "notes": "仅记录官方入口；更新渠道与平台需单独适配。",
+      "implemented": false,
+      "verification": {
+        "status": "verified",
+        "checked_on": "2026-11-06",
+        "final_url": "https://zoom.us/download?cms_guid=false",
+        "content_type": "text/html;charset=utf-8",
+        "truncated": false,
+        "shape": null,
+        "detail": ""
+      }
+    },
+    {
+      "id": "teams",
+      "name": "Microsoft Teams",
+      "category": "communication",
+      "platforms": [
+        "macos"
+      ],
+      "source_type": "release-page",
+      "official_url": "https://learn.microsoft.com/en-us/microsoftteams/teams-client-update",
+      "notes": "这里只收录官方 macOS 桌面端；Linux Web/PWA 与原生应用分开。",
+      "implemented": false,
+      "verification": {
+        "status": "verified",
+        "checked_on": "2026-11-06",
+        "final_url": "https://learn.microsoft.com/en-us/microsoftteams/teams-client-update",
+        "content_type": "text/markdown; charset=utf-8",
+        "truncated": false,
+        "shape": null,
+        "detail": ""
+      }
+    },
+    {
+      "id": "vlc",
+      "name": "VLC",
+      "category": "media",
+      "platforms": [
+        "linux",
+        "macos"
+      ],
+      "source_type": "sparkle",
+      "official_url": "https://update.videolan.org/vlc/sparkle/vlc-intel64.xml",
+      "notes": "此清单用于 macOS Intel；Linux 使用官方发行页/原软件源。ARM64 需另核实。",
+      "implemented": false,
+      "official_docs": [
+        "https://www.videolan.org/vlc/"
+      ],
+      "verification": {
+        "status": "verified",
+        "checked_on": "2026-11-06",
+        "final_url": "https://update.videolan.org/vlc/sparkle/vlc-intel64.xml",
+        "content_type": "text/xml",
+        "truncated": false,
+        "shape": null,
+        "detail": ""
+      }
+    },
+    {
+      "id": "iina",
+      "name": "IINA",
+      "category": "media",
+      "platforms": [
+        "macos"
+      ],
+      "source_type": "github-releases",
+      "official_url": "https://api.github.com/repos/iina/iina/releases/latest",
+      "notes": "",
+      "implemented": false,
+      "verification": {
+        "status": "verified",
+        "checked_on": "2026-11-06",
+        "final_url": "https://api.github.com/repos/iina/iina/releases/latest",
+        "content_type": "application/json; charset=utf-8",
+        "truncated": false,
+        "shape": [
+          "url",
+          "assets_url",
+          "upload_url",
+          "html_url",
+          "id",
+          "author",
+          "node_id",
+          "tag_name",
+          "target_commitish",
+          "name",
+          "draft",
+          "immutable",
+          "prerelease",
+          "created_at",
+          "updated_at"
+        ],
+        "detail": ""
+      }
+    },
+    {
+      "id": "obs-studio",
+      "name": "OBS Studio",
+      "category": "media",
+      "platforms": [
+        "linux",
+        "macos"
+      ],
+      "source_type": "github-releases",
+      "official_url": "https://api.github.com/repos/obsproject/obs-studio/releases/latest",
+      "notes": "",
+      "implemented": false,
+      "verification": {
+        "status": "verified",
+        "checked_on": "2026-11-06",
+        "final_url": "https://api.github.com/repos/obsproject/obs-studio/releases/latest",
+        "content_type": "application/json; charset=utf-8",
+        "truncated": false,
+        "shape": [
+          "url",
+          "assets_url",
+          "upload_url",
+          "html_url",
+          "id",
+          "author",
+          "node_id",
+          "tag_name",
+          "target_commitish",
+          "name",
+          "draft",
+          "immutable",
+          "prerelease",
+          "created_at",
+          "updated_at"
+        ],
+        "detail": ""
+      }
+    },
+    {
+      "id": "handbrake",
+      "name": "HandBrake",
+      "category": "media",
+      "platforms": [
+        "linux",
+        "macos"
+      ],
+      "source_type": "github-releases",
+      "official_url": "https://api.github.com/repos/HandBrake/HandBrake/releases/latest",
+      "notes": "",
+      "implemented": false,
+      "verification": {
+        "status": "verified",
+        "checked_on": "2026-11-06",
+        "final_url": "https://api.github.com/repos/HandBrake/HandBrake/releases/latest",
+        "content_type": "application/json; charset=utf-8",
+        "truncated": false,
+        "shape": [
+          "url",
+          "assets_url",
+          "upload_url",
+          "html_url",
+          "id",
+          "author",
+          "node_id",
+          "tag_name",
+          "target_commitish",
+          "name",
+          "draft",
+          "immutable",
+          "prerelease",
+          "created_at",
+          "updated_at"
+        ],
+        "detail": ""
+      }
+    },
+    {
+      "id": "audacity",
+      "name": "Audacity",
+      "category": "media",
+      "platforms": [
+        "linux",
+        "macos"
+      ],
+      "source_type": "github-releases",
+      "official_url": "https://api.github.com/repos/audacity/audacity/releases/latest",
+      "notes": "",
+      "implemented": false,
+      "verification": {
+        "status": "verified",
+        "checked_on": "2026-11-06",
+        "final_url": "https://api.github.com/repos/audacity/audacity/releases/latest",
+        "content_type": "application/json; charset=utf-8",
+        "truncated": false,
+        "shape": [
+          "url",
+          "assets_url",
+          "upload_url",
+          "html_url",
+          "id",
+          "author",
+          "node_id",
+          "tag_name",
+          "target_commitish",
+          "name",
+          "draft",
+          "immutable",
+          "prerelease",
+          "created_at",
+          "updated_at"
+        ],
+        "detail": ""
+      }
+    },
+    {
+      "id": "gimp",
+      "name": "GIMP",
+      "category": "media",
+      "platforms": [
+        "linux",
+        "macos"
+      ],
+      "source_type": "json",
+      "official_url": "https://www.gimp.org/gimp_versions.json",
+      "notes": "稳定版与开发版分开，下载项分别带平台与架构。",
+      "implemented": false,
+      "verification": {
+        "status": "verified",
+        "checked_on": "2026-11-06",
+        "final_url": "https://www.gimp.org/gimp_versions.json",
+        "content_type": "application/json",
+        "truncated": false,
+        "shape": [
+          "STABLE",
+          "DEVELOPMENT",
+          "NIGHTLY"
+        ],
+        "detail": ""
+      }
+    },
+    {
+      "id": "blender",
+      "name": "Blender",
+      "category": "media",
+      "platforms": [
+        "linux",
+        "macos"
+      ],
+      "source_type": "release-page",
+      "official_url": "https://www.blender.org/download/releases/",
+      "notes": "Stable、LTS 与实验构建分开。",
+      "implemented": false,
+      "verification": {
+        "status": "verified",
+        "checked_on": "2026-11-06",
+        "final_url": "https://www.blender.org/download/releases/",
+        "content_type": "text/html; charset=UTF-8",
+        "truncated": false,
+        "shape": null,
+        "detail": ""
+      }
+    },
+    {
+      "id": "inkscape",
+      "name": "Inkscape",
+      "category": "media",
+      "platforms": [
+        "linux",
+        "macos"
+      ],
+      "source_type": "release-page",
+      "official_url": "https://inkscape.org/release/",
+      "notes": "官方发行页；按安装渠道核对可用包。",
+      "implemented": false,
+      "verification": {
+        "status": "unconfirmed",
+        "checked_on": "2026-11-06",
+        "final_url": "https://inkscape.org/release/",
+        "content_type": "",
+        "truncated": false,
+        "shape": null,
+        "detail": "官方发行页请求返回 HTTP 502；待复核，不作为可自动检测接口。"
+      }
+    },
+    {
+      "id": "keepassxc",
+      "name": "KeePassXC",
+      "category": "security",
+      "platforms": [
+        "linux",
+        "macos"
+      ],
+      "source_type": "github-releases",
+      "official_url": "https://api.github.com/repos/keepassxreboot/keepassxc/releases/latest",
+      "notes": "",
+      "implemented": false,
+      "verification": {
+        "status": "verified",
+        "checked_on": "2026-11-06",
+        "final_url": "https://api.github.com/repos/keepassxreboot/keepassxc/releases/latest",
+        "content_type": "application/json; charset=utf-8",
+        "truncated": false,
+        "shape": [
+          "url",
+          "assets_url",
+          "upload_url",
+          "html_url",
+          "id",
+          "author",
+          "node_id",
+          "tag_name",
+          "target_commitish",
+          "name",
+          "draft",
+          "immutable",
+          "prerelease",
+          "created_at",
+          "updated_at"
+        ],
+        "detail": ""
+      }
+    },
+    {
+      "id": "bitwarden",
+      "name": "Bitwarden Desktop",
+      "category": "security",
+      "platforms": [
+        "linux",
+        "macos"
+      ],
+      "source_type": "github-releases-list",
+      "official_url": "https://api.github.com/repos/bitwarden/clients/releases?per_page=30",
+      "notes": "仓库同时发行多个客户端，必须筛选 desktop-v 前缀并排除 draft/prerelease，不能直接使用 releases/latest。",
+      "implemented": false,
+      "tag_pattern": "^desktop-v",
+      "verification": {
+        "status": "verified",
+        "checked_on": "2026-11-06",
+        "final_url": "https://api.github.com/repos/bitwarden/clients/releases?per_page=30",
+        "content_type": "application/json; charset=utf-8",
+        "truncated": false,
+        "shape": {
+          "type": "array",
+          "length": 30
+        },
+        "detail": ""
+      }
+    },
+    {
+      "id": "1password",
+      "name": "1Password",
+      "category": "security",
+      "platforms": [
+        "linux",
+        "macos"
+      ],
+      "source_type": "release-page",
+      "official_url": "https://releases.1password.com/",
+      "notes": "按产品、系统、稳定/测试渠道筛选；Linux 使用官方发行与原包源。",
+      "implemented": false,
+      "official_docs": [
+        "https://support.1password.com/update-1password/"
+      ],
+      "verification": {
+        "status": "verified",
+        "checked_on": "2026-11-06",
+        "final_url": "https://releases.1password.com/",
+        "content_type": "text/html",
+        "truncated": false,
+        "shape": null,
+        "detail": ""
+      }
+    },
+    {
+      "id": "rectangle",
+      "name": "Rectangle",
+      "category": "utility",
+      "platforms": [
+        "macos"
+      ],
+      "source_type": "github-releases",
+      "official_url": "https://api.github.com/repos/rxhanson/Rectangle/releases/latest",
+      "notes": "Rectangle 与 Rectangle Pro 是不同产品。",
+      "implemented": false,
+      "verification": {
+        "status": "verified",
+        "checked_on": "2026-11-06",
+        "final_url": "https://api.github.com/repos/rxhanson/Rectangle/releases/latest",
+        "content_type": "application/json; charset=utf-8",
+        "truncated": false,
+        "shape": [
+          "url",
+          "assets_url",
+          "upload_url",
+          "html_url",
+          "id",
+          "author",
+          "node_id",
+          "tag_name",
+          "target_commitish",
+          "name",
+          "draft",
+          "immutable",
+          "prerelease",
+          "created_at",
+          "updated_at"
+        ],
+        "detail": ""
+      }
+    },
+    {
+      "id": "raycast",
+      "name": "Raycast",
+      "category": "utility",
+      "platforms": [
+        "macos"
+      ],
+      "source_type": "release-page",
+      "official_url": "https://www.raycast.com/changelog",
+      "notes": "官方变更日志；未确认公开机器更新协议。",
+      "implemented": false,
+      "verification": {
+        "status": "verified",
+        "checked_on": "2026-11-06",
+        "final_url": "https://www.raycast.com/changelog",
+        "content_type": "text/html; charset=utf-8",
+        "truncated": false,
+        "shape": null,
+        "detail": ""
+      }
+    },
+    {
+      "id": "alfred",
+      "name": "Alfred",
+      "category": "utility",
+      "platforms": [
+        "macos"
+      ],
+      "source_type": "release-page",
+      "official_url": "https://www.alfredapp.com/changelog/",
+      "notes": "正式版与预发布版分开。",
+      "implemented": false,
+      "verification": {
+        "status": "verified",
+        "checked_on": "2026-11-06",
+        "final_url": "https://www.alfredapp.com/changelog/",
+        "content_type": "text/html; charset=UTF-8",
+        "truncated": false,
+        "shape": null,
+        "detail": ""
+      }
+    },
+    {
+      "id": "appcleaner",
+      "name": "AppCleaner",
+      "category": "utility",
+      "platforms": [
+        "macos"
+      ],
+      "source_type": "download-page",
+      "official_url": "https://freemacsoft.net/appcleaner/",
+      "notes": "核对最低 macOS 要求，旧系统仍可能只适用旧版本。",
+      "implemented": false,
+      "verification": {
+        "status": "verified",
+        "checked_on": "2026-11-06",
+        "final_url": "https://freemacsoft.net/appcleaner/",
+        "content_type": "text/html",
+        "truncated": false,
+        "shape": null,
+        "detail": ""
+      }
+    },
+    {
+      "id": "cleanmymac",
+      "name": "CleanMyMac",
+      "category": "utility",
+      "platforms": [
+        "macos"
+      ],
+      "source_type": "release-page",
+      "official_url": "https://macpaw.com/cleanmymac/whats-new",
+      "notes": "Mac App Store 与官网发行渠道分开。",
+      "implemented": false,
+      "verification": {
+        "status": "verified",
+        "checked_on": "2026-11-06",
+        "final_url": "https://macpaw.com/cleanmymac/whats-new",
+        "content_type": "text/html; charset=utf-8",
+        "truncated": false,
+        "shape": null,
+        "detail": ""
+      }
+    },
+    {
+      "id": "wechat",
+      "name": "微信 / WeChat",
+      "category": "communication",
+      "platforms": [
+        "linux",
+        "macos"
+      ],
+      "source_type": "download-page",
+      "official_url": "https://linux.weixin.qq.com/",
+      "notes": "Linux 与 macOS 分别发行；当前只收录官方入口。",
+      "implemented": false,
+      "official_docs": [
+        "https://mac.weixin.qq.com/"
+      ],
+      "verification": {
+        "status": "verified",
+        "checked_on": "2026-11-06",
+        "final_url": "https://linux.weixin.qq.com/",
+        "content_type": "text/html;charset=utf-8",
+        "truncated": false,
+        "shape": null,
+        "detail": ""
+      }
+    },
+    {
+      "id": "qq",
+      "name": "QQ",
+      "category": "communication",
+      "platforms": [
+        "linux",
+        "macos"
+      ],
+      "source_type": "download-page",
+      "official_url": "https://im.qq.com/linuxqq/index.shtml",
+      "notes": "Linux 与 macOS 分别发行，不能直接比较两个平台版本。",
+      "implemented": false,
+      "official_docs": [
+        "https://im.qq.com/macqq/index.shtml"
+      ],
+      "verification": {
+        "status": "verified",
+        "checked_on": "2026-11-06",
+        "final_url": "https://im.qq.com/linuxqq/index.shtml",
+        "content_type": "text/html",
+        "truncated": false,
+        "shape": null,
+        "detail": ""
+      }
+    },
+    {
+      "id": "wps",
+      "name": "WPS Office",
+      "category": "productivity",
+      "platforms": [
+        "linux",
+        "macos"
+      ],
+      "source_type": "download-page",
+      "official_url": "https://linux.wps.cn/",
+      "notes": "Linux 与 macOS 分别发行；不从下载文件名推断完整更新适用性。",
+      "implemented": false,
+      "official_docs": [
+        "https://www.wps.cn/product/wpsmac/"
+      ],
+      "verification": {
+        "status": "verified",
+        "checked_on": "2026-11-06",
+        "final_url": "https://linux.wps.cn/",
+        "content_type": "text/html;charset=UTF-8",
+        "truncated": false,
+        "shape": null,
+        "detail": ""
+      }
+    },
+    {
+      "id": "feishu",
+      "name": "飞书",
+      "category": "communication",
+      "platforms": [
+        "linux",
+        "macos"
+      ],
+      "source_type": "download-page",
+      "official_url": "https://www.feishu.cn/download",
+      "notes": "官方安装入口；按平台、架构和组织发布策略适配。",
+      "implemented": false,
+      "verification": {
+        "status": "verified",
+        "checked_on": "2026-11-06",
+        "final_url": "https://www.feishu.cn/download",
+        "content_type": "text/html",
+        "truncated": false,
+        "detail": "通过实际浏览器渲染核实，包含 Linux 与 macOS 客户端入口；静态抓取仅有应用外壳。"
+      }
+    }
+  ]
+}
