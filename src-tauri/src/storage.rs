@@ -1,7 +1,10 @@
-use crate::{models::format_size, platform};
+use crate::{
+    models::{ActionReport, format_size},
+    platform,
+};
 use serde::Serialize;
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::{HashMap, HashSet, VecDeque},
     ffi::OsString,
     fs,
     path::{Path, PathBuf},
@@ -18,6 +21,38 @@ pub struct DirectoryUsage {
     pub size_bytes: u64,
     pub size: String,
     pub is_dir: bool,
+    #[serde(skip)]
+    identity: FileIdentity,
+}
+#[derive(Clone, PartialEq, Eq)]
+struct FileIdentity {
+    is_dir: bool,
+    len: u64,
+    modified: Option<std::time::SystemTime>,
+    #[cfg(unix)]
+    device: u64,
+    #[cfg(unix)]
+    inode: u64,
+}
+impl FileIdentity {
+    fn from_metadata(meta: &fs::Metadata) -> Self {
+        #[cfg(unix)]
+        use std::os::unix::fs::MetadataExt;
+        Self {
+            is_dir: meta.is_dir(),
+            // Directory contents are checked against their cached children instead.
+            len: if meta.is_dir() { 0 } else { meta.len() },
+            modified: if meta.is_dir() {
+                None
+            } else {
+                meta.modified().ok()
+            },
+            #[cfg(unix)]
+            device: meta.dev(),
+            #[cfg(unix)]
+            inode: meta.ino(),
+        }
+    }
 }
 #[derive(Clone, Serialize)]
 pub struct DiskAnalysis {
@@ -31,14 +66,14 @@ pub struct DiskAnalysis {
 struct CachedEntry {
     name: OsString,
     bytes: u64,
-    is_dir: bool,
+    identity: FileIdentity,
 }
 impl CachedEntry {
-    fn new(path: &Path, bytes: u64, is_dir: bool) -> Self {
+    fn new(path: &Path, bytes: u64, identity: FileIdentity) -> Self {
         Self {
             name: path.file_name().unwrap_or_default().to_owned(),
             bytes,
-            is_dir,
+            identity,
         }
     }
 }
@@ -53,7 +88,7 @@ impl CachedPage {
             root,
             self.children
                 .iter()
-                .map(|entry| usage(&root.join(&entry.name), entry.bytes, entry.is_dir))
+                .map(|entry| usage(&root.join(&entry.name), entry.bytes, entry.identity.clone()))
                 .collect(),
             &[],
             self.cancelled,
@@ -67,7 +102,136 @@ struct AnalysisCache {
     excluded: Vec<PathBuf>,
     pages: HashMap<PathBuf, CachedPage>,
 }
+impl AnalysisCache {
+    fn entry(&self, path: &Path) -> Option<&CachedEntry> {
+        self.pages
+            .get(path.parent()?)?
+            .children
+            .iter()
+            .find(|entry| Some(entry.name.as_os_str()) == path.file_name())
+    }
+    fn validate_target(&self, path: &Path) -> Result<(), String> {
+        // The analysis root has no parent entry and can never be deleted from its own view.
+        let expected = self
+            .entry(path)
+            .ok_or("项目不在本次分析结果中，请重新分析")?;
+        if platform::home().is_some_and(|home| home.starts_with(path)) {
+            return Err("不能移除用户主目录或其祖先目录".into());
+        }
+        let mut pending = vec![(path.to_path_buf(), &expected.identity)];
+        while let Some((path, identity)) = pending.pop() {
+            let meta = fs::symlink_metadata(&path).map_err(|error| error.to_string())?;
+            if meta.file_type().is_symlink()
+                || (!meta.is_file() && !meta.is_dir())
+                || fs::canonicalize(&path).map_err(|error| error.to_string())? != path
+                || &FileIdentity::from_metadata(&meta) != identity
+            {
+                return Err("文件或目录已改变，请重新分析后再处理".into());
+            }
+            if meta.is_dir() {
+                let page = self.pages.get(&path).ok_or("目录未完整分析，请重新分析")?;
+                if page.cancelled || !page.warning.is_empty() {
+                    return Err("目录包含未完成的分析结果，请重新分析后再处理".into());
+                }
+                let children = fs::read_dir(&path)
+                    .map_err(|error| error.to_string())?
+                    .collect::<Result<Vec<_>, _>>()
+                    .map_err(|error| error.to_string())?;
+                // Also catches newly added files, excluded children, links and mount points.
+                if children.len() != page.children.len() {
+                    return Err("目录内容已改变或含未分析的项目，请重新分析后再处理".into());
+                }
+                let names: HashSet<_> = children
+                    .into_iter()
+                    .map(|entry| entry.file_name())
+                    .collect();
+                for child in &page.children {
+                    if !names.contains(&child.name) {
+                        return Err("目录内容已改变，请重新分析后再处理".into());
+                    }
+                    pending.push((path.join(&child.name), &child.identity));
+                }
+            }
+        }
+        Ok(())
+    }
+    fn remove_target(&mut self, path: &Path) {
+        let Some(bytes) = self.entry(path).map(|entry| entry.bytes) else {
+            return;
+        };
+        self.pages.retain(|root, _| !root.starts_with(path));
+        if let Some(parent) = path.parent().and_then(|parent| self.pages.get_mut(parent)) {
+            parent
+                .children
+                .retain(|entry| Some(entry.name.as_os_str()) != path.file_name());
+        }
+        let mut child = path.parent();
+        while let Some(path) = child {
+            if let Some(page) = path.parent().and_then(|parent| self.pages.get_mut(parent))
+                && let Some(entry) = page
+                    .children
+                    .iter_mut()
+                    .find(|entry| Some(entry.name.as_os_str()) == path.file_name())
+            {
+                entry.bytes = entry.bytes.saturating_sub(bytes);
+            }
+            child = path.parent();
+        }
+    }
+}
 static CACHE: LazyLock<Mutex<Option<AnalysisCache>>> = LazyLock::new(|| Mutex::new(None));
+
+pub fn trash_analyzed(
+    paths: Vec<String>,
+    excluded: &[String],
+    progress: impl FnMut(&str, u64, u64),
+) -> Result<ActionReport, String> {
+    trash_with_cache(paths, excluded, progress, &CACHE, |path| {
+        platform::move_to_trash(path).map(|_| ())
+    })
+}
+fn trash_with_cache(
+    paths: Vec<String>,
+    excluded: &[String],
+    mut progress: impl FnMut(&str, u64, u64),
+    cache: &Mutex<Option<AnalysisCache>>,
+    mut trash: impl FnMut(&Path) -> Result<(), String>,
+) -> Result<ActionReport, String> {
+    if paths.len() != 1 {
+        return Err("请一次选择一个文件或目录".into());
+    }
+    let excluded = excluded
+        .iter()
+        .map(|path| normalized_absolute(Path::new(path)))
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut stored = cache.lock().map_err(|error| error.to_string())?;
+    let snapshot = stored.as_mut().ok_or("尚无分析结果，请先分析目录")?;
+    let value = &paths[0];
+    let path = Path::new(value);
+    let mut report = ActionReport::default();
+    progress(value, 0, 1);
+    if excluded
+        .iter()
+        .chain(&snapshot.excluded)
+        .any(|keep| path.starts_with(keep) || keep.starts_with(path))
+    {
+        report.push(
+            value.clone(),
+            "skipped",
+            "保留名单命中此项目或其子目录，已保留",
+        );
+    } else {
+        match snapshot.validate_target(path).and_then(|()| trash(path)) {
+            Ok(()) => {
+                snapshot.remove_target(path);
+                report.push(value.clone(), "success", "已移入废纸篓");
+            }
+            Err(error) => report.push(value.clone(), "failed", error),
+        }
+    }
+    progress(value, 1, 1);
+    Ok(report)
+}
 
 pub fn roots() -> Vec<String> {
     let mut roots = Vec::new();
@@ -119,12 +283,13 @@ fn warning(warnings: &mut Vec<String>, message: String) {
         warnings.push(message);
     }
 }
-fn usage(path: &Path, bytes: u64, is_dir: bool) -> DirectoryUsage {
+fn usage(path: &Path, bytes: u64, identity: FileIdentity) -> DirectoryUsage {
     DirectoryUsage {
         path: path.to_string_lossy().into_owned(),
         size_bytes: bytes,
         size: format_size(bytes),
-        is_dir,
+        is_dir: identity.is_dir,
+        identity,
     }
 }
 fn report(
@@ -148,9 +313,10 @@ struct Frame {
     bytes: u64,
     children: Vec<CachedEntry>,
     warnings_start: usize,
+    identity: FileIdentity,
 }
 impl Frame {
-    fn new(path: PathBuf, warnings_start: usize) -> std::io::Result<Self> {
+    fn new(path: PathBuf, warnings_start: usize, identity: FileIdentity) -> std::io::Result<Self> {
         let entries = fs::read_dir(&path)?;
         Ok(Self {
             path,
@@ -158,11 +324,12 @@ impl Frame {
             bytes: 0,
             children: Vec::new(),
             warnings_start,
+            identity,
         })
     }
-    fn add(&mut self, path: &Path, bytes: u64, is_dir: bool) {
+    fn add(&mut self, path: &Path, bytes: u64, identity: FileIdentity) {
         self.bytes = self.bytes.saturating_add(bytes);
-        self.children.push(CachedEntry::new(path, bytes, is_dir));
+        self.children.push(CachedEntry::new(path, bytes, identity));
     }
 }
 enum Event {
@@ -173,6 +340,7 @@ enum Event {
 // One metadata read per entry. No file contents or dependency manifests are read.
 fn scan_branch(
     path: PathBuf,
+    identity: FileIdentity,
     root_meta: &fs::Metadata,
     excluded: &[PathBuf],
     cancelled: Cancel<'_>,
@@ -180,11 +348,11 @@ fn scan_branch(
     sender: &mpsc::SyncSender<Event>,
 ) {
     let mut warnings = Vec::new();
-    let first = match Frame::new(path.clone(), 0) {
+    let first = match Frame::new(path.clone(), 0, identity.clone()) {
         Ok(frame) => frame,
         Err(error) => {
             let _ = sender.send(Event::Done(
-                usage(&path, 0, true),
+                usage(&path, 0, identity),
                 HashMap::from([(
                     path.clone(),
                     CachedPage {
@@ -229,7 +397,8 @@ fn scan_branch(
                 continue;
             }
             if meta.is_dir() {
-                match Frame::new(child.clone(), warnings.len()) {
+                let identity = FileIdentity::from_metadata(&meta);
+                match Frame::new(child.clone(), warnings.len(), identity.clone()) {
                     Ok(frame) => stack.push(frame),
                     Err(error) => {
                         warning(&mut warnings, format!("{}: {error}", child.display()));
@@ -241,13 +410,13 @@ fn scan_branch(
                                 cancelled: false,
                             },
                         );
-                        stack.last_mut().unwrap().add(&child, 0, true);
+                        stack.last_mut().unwrap().add(&child, 0, identity);
                     }
                 }
             } else if meta.is_file() {
-                frame.add(&child, meta.len(), false);
+                frame.add(&child, meta.len(), FileIdentity::from_metadata(&meta));
                 let count = files.fetch_add(1, Ordering::Relaxed) + 1;
-                if count % 256 == 0 {
+                if count.is_multiple_of(256) {
                     let _ =
                         sender.send(Event::Progress(child.to_string_lossy().into_owned(), count));
                 }
@@ -255,7 +424,7 @@ fn scan_branch(
             continue;
         }
         let frame = stack.pop().unwrap();
-        let item = usage(&frame.path, frame.bytes, true);
+        let item = usage(&frame.path, frame.bytes, frame.identity);
         let mut notes = warnings[frame.warnings_start..].to_vec();
         if warnings.len() == 100 {
             notes.push("部分提示已省略，请查看分析根目录的结果提示".into());
@@ -269,7 +438,7 @@ fn scan_branch(
             },
         );
         if let Some(parent) = stack.last_mut() {
-            parent.add(Path::new(&item.path), item.size_bytes, true);
+            parent.add(Path::new(&item.path), item.size_bytes, item.identity);
         } else {
             let _ = sender.send(Event::Done(item, pages, warnings));
             return;
@@ -384,11 +553,11 @@ fn analyze_with_cache(
             continue;
         }
         if meta.is_dir() {
-            jobs.push_back(path);
+            jobs.push_back((path, FileIdentity::from_metadata(&meta)));
         } else if meta.is_file() {
-            directories.push(usage(&path, meta.len(), false));
+            directories.push(usage(&path, meta.len(), FileIdentity::from_metadata(&meta)));
             let count = files.fetch_add(1, Ordering::Relaxed) + 1;
-            if count % 256 == 0 {
+            if count.is_multiple_of(256) {
                 progress(&path.to_string_lossy(), count, 0);
             }
         }
@@ -407,10 +576,12 @@ fn analyze_with_cache(
             scope.spawn(move || {
                 while !cancelled() {
                     let job = jobs.lock().unwrap().pop_front();
-                    let Some(path) = job else {
+                    let Some((path, identity)) = job else {
                         break;
                     };
-                    scan_branch(path, root_meta, excluded, cancelled, files, &sender);
+                    scan_branch(
+                        path, identity, root_meta, excluded, cancelled, files, &sender,
+                    );
                 }
             });
         }
@@ -451,7 +622,13 @@ fn analyze_with_cache(
             children: result
                 .directories
                 .iter()
-                .map(|item| CachedEntry::new(Path::new(&item.path), item.size_bytes, item.is_dir))
+                .map(|item| {
+                    CachedEntry::new(
+                        Path::new(&item.path),
+                        item.size_bytes,
+                        item.identity.clone(),
+                    )
+                })
                 .collect(),
             warning: result.warning.clone(),
             cancelled: stopped,
@@ -482,6 +659,136 @@ mod tests {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.0);
         }
+    }
+
+    #[test]
+    fn trash_updates_nested_and_ancestor_snapshots_without_rescanning() {
+        let fixture = Fixture::new("trash-snapshot");
+        fs::create_dir_all(fixture.0.join("scan/nested/deep")).unwrap();
+        fs::write(fixture.0.join("scan/nested/deep/file"), b"1234").unwrap();
+        fs::write(fixture.0.join("scan/nested/keep"), b"12").unwrap();
+        let root = fixture.0.join("scan");
+        let cache = Mutex::new(None);
+        analyze_with_cache(
+            root.to_str().unwrap(),
+            &[],
+            true,
+            &|| false,
+            |_, _, _| {},
+            &cache,
+        )
+        .unwrap();
+        let deep = root.join("nested/deep");
+        let result = trash_with_cache(
+            vec![deep.to_str().unwrap().into()],
+            &[],
+            |_, _, _| {},
+            &cache,
+            |path| fs::rename(path, fixture.0.join("trashed")).map_err(|error| error.to_string()),
+        )
+        .unwrap();
+        assert_eq!(result.succeeded, 1);
+        let stored = cache.lock().unwrap();
+        let snapshot = stored.as_ref().unwrap();
+        assert!(!snapshot.pages.contains_key(&deep));
+        assert_eq!(
+            snapshot.pages[&root].analysis(&root).directories[0].size_bytes,
+            2
+        );
+        assert_eq!(snapshot.pages[&root.join("nested")].children.len(), 1);
+        assert!(snapshot.validate_target(&deep).is_err());
+        assert!(
+            snapshot.validate_target(&root.join("nested")).is_ok(),
+            "known deletions allow further cleanup without rescanning"
+        );
+        drop(stored);
+        let keep = root.join("nested/keep");
+        let failed = trash_with_cache(
+            vec![keep.to_str().unwrap().into()],
+            &[],
+            |_, _, _| {},
+            &cache,
+            |_| Err("fixture trash failure".into()),
+        )
+        .unwrap();
+        assert_eq!(failed.failed, 1);
+        assert!(
+            cache
+                .lock()
+                .unwrap()
+                .as_ref()
+                .unwrap()
+                .entry(&keep)
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn trash_rejects_changes_links_unscanned_paths_and_protected_descendants() {
+        let fixture = Fixture::new("trash-guards");
+        let root = fixture.0.join("scan");
+        fs::create_dir_all(root.join("nested/deep")).unwrap();
+        let file = root.join("nested/deep/file");
+        fs::write(&file, b"1234").unwrap();
+        let cache = Mutex::new(None);
+        let scan = || {
+            analyze_with_cache(
+                root.to_str().unwrap(),
+                &[],
+                true,
+                &|| false,
+                |_, _, _| {},
+                &cache,
+            )
+            .unwrap()
+        };
+        scan();
+        let remove = |path: &Path, excluded: &[String]| {
+            trash_with_cache(
+                vec![path.to_str().unwrap().into()],
+                excluded,
+                |_, _, _| {},
+                &cache,
+                |_| panic!("rejected paths must never reach trash"),
+            )
+            .unwrap()
+        };
+        assert_eq!(remove(&root, &[]).failed, 1, "analysis root is protected");
+        let outside = fixture.0.join("outside");
+        fs::write(&outside, b"outside").unwrap();
+        assert_eq!(remove(&outside, &[]).failed, 1);
+        assert_eq!(
+            remove(&root.join("nested"), &[file.to_str().unwrap().into()]).skipped,
+            1
+        );
+        fs::write(&file, b"changed").unwrap();
+        assert_eq!(remove(&file, &[]).failed, 1);
+        assert_eq!(
+            remove(&root.join("nested"), &[]).failed,
+            1,
+            "nested modifications are rechecked"
+        );
+        scan();
+        fs::write(root.join("nested/deep/new"), b"new").unwrap();
+        assert_eq!(
+            remove(&root.join("nested"), &[]).failed,
+            1,
+            "new descendants must be analyzed first"
+        );
+        scan();
+        #[cfg(unix)]
+        {
+            fs::remove_file(&file).unwrap();
+            std::os::unix::fs::symlink(&outside, &file).unwrap();
+            assert_eq!(remove(&file, &[]).failed, 1);
+            assert_eq!(remove(&root.join("nested"), &[]).failed, 1);
+        }
+        scan();
+        assert_eq!(
+            remove(&root.join("nested"), &[]).failed,
+            1,
+            "unscanned links inside a directory stay protected"
+        );
     }
 
     #[test]

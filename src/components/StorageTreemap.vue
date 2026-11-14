@@ -2,8 +2,8 @@
 import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { File, Folder } from 'lucide-vue-next';
 import { layoutStorage, type StorageItem } from '../treemap';
-const props = defineProps<{ items: StorageItem[]; highlighted?: string }>();
-const emit = defineEmits<{ open: [item: StorageItem]; highlight: [path: string]; showList: [] }>();
+const props = defineProps<{ items: StorageItem[]; highlighted?: string; disabled?: boolean }>();
+const emit = defineEmits<{ open: [item: StorageItem]; highlight: [path: string]; showList: []; contextmenu: [item: StorageItem, event: MouseEvent] }>();
 const container = ref<HTMLElement>();
 const width = ref(600), height = ref(400);
 let observer: ResizeObserver | undefined;
@@ -26,7 +26,7 @@ function title(tile: typeof tiles.value[number]) {
 </script>
 <template>
   <div ref="container" class="treemap" aria-label="按面积显示目录与文件占用">
-    <button v-for="(tile, index) in tiles" :key="tile.data.item?.path || 'other'" class="tile" :class="{ highlighted: tile.data.item?.path === highlighted, compact: tile.x1 - tile.x0 < 75 || tile.y1 - tile.y0 < 65 }" :style="{ left: `${tile.x0}px`, top: `${tile.y0}px`, width: `${tile.x1 - tile.x0}px`, height: `${tile.y1 - tile.y0}px`, '--tile-tone': tones[index % tones.length] }" :title="title(tile)" :aria-label="title(tile)" @mouseenter="emit('highlight', tile.data.item?.path || '')" @mouseleave="emit('highlight', '')" @focus="emit('highlight', tile.data.item?.path || '')" @blur="emit('highlight', '')" @click="tile.data.item ? emit('open', tile.data.item) : emit('showList')">
+    <button v-for="(tile, index) in tiles" :key="tile.data.item?.path || 'other'" class="tile" :disabled="disabled" :class="{ highlighted: tile.data.item?.path === highlighted, compact: tile.x1 - tile.x0 < 75 || tile.y1 - tile.y0 < 65 }" :style="{ left: `${tile.x0}px`, top: `${tile.y0}px`, width: `${tile.x1 - tile.x0}px`, height: `${tile.y1 - tile.y0}px`, '--tile-tone': tones[index % tones.length] }" :title="title(tile)" :aria-label="title(tile)" @mouseenter="emit('highlight', tile.data.item?.path || '')" @mouseleave="emit('highlight', '')" @focus="emit('highlight', tile.data.item?.path || '')" @blur="emit('highlight', '')" @contextmenu.prevent="tile.data.item && emit('contextmenu', tile.data.item, $event)" @click="tile.data.item ? emit('open', tile.data.item) : emit('showList')">
       <template v-if="tile.x1 - tile.x0 > 32 && tile.y1 - tile.y0 > 24">
         <component :is="tile.data.item?.is_dir ? Folder : File" :size="26" />
         <span>{{ tile.data.item ? name(tile.data.item) : `其余 ${tile.data.count} 项` }}</span>

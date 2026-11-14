@@ -1,19 +1,20 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue';
+import { computed, nextTick, onDeactivated, onMounted, onUnmounted, ref } from 'vue';
 import { invoke, isTauri } from '@tauri-apps/api/core';
-import { ArrowLeft, ChevronDown, File, Folder, FolderOpen, HardDrive, Monitor } from 'lucide-vue-next';
+import { ArrowLeft, ChevronDown, File, Folder, FolderOpen, HardDrive, Monitor, Trash2 } from 'lucide-vue-next';
 import PageHeader from '../layout/PageHeader.vue';
 import SummaryDetails from '../components/SummaryDetails.vue';
 import ScanAction from '../components/ScanAction.vue';
 import StorageTreemap from '../components/StorageTreemap.vue';
+import ActionResults from '../components/ActionResults.vue';
 import type { StorageItem } from '../treemap';
 import ScanningRadar from '../layout/ScanningRadar.vue';
 import { revealItemInDir } from '@tauri-apps/plugin-opener';
-import { ElMessage } from 'element-plus';
+import { ElMessage, ElMessageBox } from 'element-plus';
 import { useRouter } from 'vue-router';
 import { activeTask, runTask } from '../tasks';
 import { preferences, loadPreferences } from '../preferences';
-import { copyPath } from '../cleanup';
+import { copyPath, type ActionReport } from '../cleanup';
 
 type Usage = StorageItem;
 interface Analysis { root?: string; directories: Usage[]; warning: string; cancelled: boolean; cached?: boolean }
@@ -32,6 +33,12 @@ const directories = ref<Usage[]>([]);
 const warning = ref('');
 const error = ref('');
 const scanning = ref(false);
+const removing = ref(false);
+const busy = computed(() => scanning.value || browsing.value || removing.value);
+const actionReport = ref<ActionReport | null>(null);
+const contextMenu = ref<{ item: Usage; x: number; y: number } | null>(null);
+const menuElement = ref<HTMLElement>();
+let cancelConfirmation: (() => void) | undefined;
 const loaded = ref(false);
 const visual = ref(true);
 const highlighted = ref('');
@@ -65,7 +72,8 @@ function showAnalysis(result: Analysis, path: string, remember: boolean) {
   loaded.value = true;
 }
 async function analyze(path = root.value) {
-  if (!desktopConnected || !path || scanning.value || browsing.value) return false;
+  if (!desktopConnected || !path || busy.value) return false;
+  closeMenu();
   scanning.value = true;
   error.value = '';
   try {
@@ -76,13 +84,15 @@ async function analyze(path = root.value) {
     snapshotExclusions.value = excluded;
     snapshotPages.set(snapshotRoot.value, result);
     history.value = [];
+    actionReport.value = null;
     showAnalysis(result, path, false);
     return true;
   } catch (cause) { error.value = String(cause); return false; }
   finally { scanning.value = false; }
 }
 async function browse(path: string, remember = true) {
-  if (!desktopConnected || !loaded.value || scanning.value || browsing.value) return false;
+  if (!desktopConnected || !loaded.value || busy.value) return false;
+  closeMenu();
   const existing = snapshotPages.get(path);
   if (existing) { showAnalysis({ ...existing, cached: true }, path, remember); return true; }
   browsing.value = true;
@@ -98,12 +108,72 @@ async function goBack() {
   const previous = history.value[history.value.length - 1];
   if (previous && await browse(previous, false)) history.value.pop();
 }
-function drillDown(row: Usage) { if (row.is_dir) return browse(row.path); return reveal(row.path); }
+function drillDown(row: Usage) { if (busy.value) return; if (row.is_dir) return browse(row.path); return reveal(row.path); }
 async function pick() { try { const path = await invoke<string | null>('pick_directory', { title: '选择分析目录' }); if (path) root.value = path; } catch (cause) { ElMessage.error(String(cause)); } }
 async function reveal(path: string) { try { await revealItemInDir(path); } catch (cause) { ElMessage.error(String(cause)); } }
 async function copy(path: string) { try { await copyPath(path); ElMessage.success('路径已复制'); } catch (cause) { ElMessage.error(String(cause)); } }
 async function scanLarge() { await router.push({ path: '/large-files', query: { root: analyzedRoot.value } }); }
+function closeMenu() { contextMenu.value = null; }
+async function openMenu(item: Usage, event: MouseEvent) {
+  event.preventDefault();
+  if (!desktopConnected || busy.value) return;
+  const bounds = (event.target as HTMLElement).getBoundingClientRect();
+  contextMenu.value = { item, x: Math.max(8, Math.min(event.clientX || bounds.left, window.innerWidth - 248)), y: Math.max(8, Math.min(event.clientY || bounds.bottom, window.innerHeight - 210)) };
+  await nextTick();
+  menuElement.value?.querySelector<HTMLButtonElement>('button')?.focus();
+}
+function tableMenu(item: Usage, _column: unknown, event: MouseEvent) { void openMenu(item, event); }
+function outsideMenu(event: PointerEvent) { if (!menuElement.value?.contains(event.target as Node)) closeMenu(); }
+function menuKey(event: KeyboardEvent) {
+  if (event.key === 'Escape') { event.preventDefault(); closeMenu(); return; }
+  if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return;
+  event.preventDefault();
+  const buttons = [...(menuElement.value?.querySelectorAll<HTMLButtonElement>('button') || [])];
+  const index = buttons.indexOf(document.activeElement as HTMLButtonElement);
+  const target = event.key === 'Home' ? 0 : event.key === 'End' ? buttons.length - 1 : (index + (event.key === 'ArrowDown' ? 1 : -1) + buttons.length) % buttons.length;
+  buttons[target]?.focus();
+}
+function menuAction(action: 'open' | 'copy' | 'delete') {
+  const item = contextMenu.value?.item;
+  closeMenu();
+  if (!item) return;
+  if (action === 'delete') void removeItem(item);
+  else if (action === 'copy') void copy(item.path);
+  else void reveal(item.path);
+}
+async function removeItem(item: Usage) {
+  if (!desktopConnected || busy.value) return;
+  closeMenu();
+  removing.value = true;
+  try {
+    await Promise.race([ElMessageBox.confirm(`将${item.is_dir ? '目录及其全部内容' : '文件'}移入废纸篓？\n${item.path}\n分析时大小：${item.size}。清空废纸篓后才会释放空间。`, '移入废纸篓', { confirmButtonText: '确认移入', cancelButtonText: '保留', type: 'warning' }), new Promise<never>((_, reject) => { cancelConfirmation = () => reject('cancel'); })]);
+    cancelConfirmation = undefined;
+    actionReport.value = await runTask<ActionReport>('trash_files', { paths: [item.path], kind: 'storage' });
+    if (actionReport.value.succeeded) {
+      directories.value = directories.value.filter(row => row.path !== item.path);
+      page.value = Math.min(page.value, Math.max(1, Math.ceil(directories.value.length / 100)));
+      highlighted.value = '';
+      snapshotPages.clear();
+      try {
+        const analysis = await invoke<Analysis>('analyze_disk', { root: analyzedRoot.value, refresh: false, options: { excluded: snapshotExclusions.value } });
+        snapshotPages.set(analyzedRoot.value, analysis);
+        showAnalysis(analysis, analyzedRoot.value, false);
+      } catch (cause) { ElMessage.warning(`已移入废纸篓，更新分析结果失败：${cause}`); }
+      ElMessage.success('已移入废纸篓');
+    } else {
+      ElMessage.warning(actionReport.value.items[0]?.message || '未移入废纸篓，请查看处理结果');
+    }
+  } catch (cause) { if (cause !== 'cancel' && cause !== 'close') ElMessage.error(String(cause)); }
+  finally { cancelConfirmation = undefined; removing.value = false; }
+}
+function deactivate() {
+  closeMenu();
+  if (cancelConfirmation) { ElMessageBox.close(); cancelConfirmation(); cancelConfirmation = undefined; }
+}
 onMounted(async () => {
+  document.addEventListener('pointerdown', outsideMenu);
+  window.addEventListener('scroll', closeMenu, true);
+  window.addEventListener('resize', closeMenu);
   if (!desktopConnected) return;
   try {
     await loadPreferences();
@@ -111,55 +181,59 @@ onMounted(async () => {
     root.value = roots.value[0] ?? '';
   } catch (cause) { error.value = String(cause); }
 });
+onDeactivated(deactivate);
+onUnmounted(() => { deactivate(); document.removeEventListener('pointerdown', outsideMenu); window.removeEventListener('scroll', closeMenu, true); window.removeEventListener('resize', closeMenu); });
 </script>
 
 <template>
   <div class="tool-page">
     <PageHeader title="空间透视" subtitle="从目录到文件夹，看清磁盘空间流向。">
       <template #actions>
-        <ScanAction v-if="!scanning && (loaded || error)" :scanning="scanning" :task="task" :disabled="!desktopConnected || !root || browsing" :hint="`已检查 ${task?.current || 0} 个文件 · 不跨文件系统`" :label="root === analyzedRoot ? '重新分析' : '分析目录'" stop-label="停止分析" @start="analyze(root)" />
+        <ScanAction v-if="!scanning && (loaded || error)" :scanning="scanning" :task="task" :disabled="!desktopConnected || !root || busy" :hint="`已检查 ${task?.current || 0} 个文件 · 不跨文件系统`" :label="root === analyzedRoot ? '重新分析' : '分析目录'" stop-label="停止分析" @start="analyze(root)" />
       </template>
     </PageHeader>
     <div class="tool-content">
       <div class="path-toolbar">
-        <button class="back-step" aria-label="返回上个目录" :disabled="!history.length || scanning || browsing" @click="goBack"><ArrowLeft :size="17" /></button>
+        <button class="back-step" aria-label="返回上个目录" :disabled="!history.length || busy" @click="goBack"><ArrowLeft :size="17" /></button>
         <Folder :size="17" class="muted-icon" />
-        <el-select v-model="root" filterable allow-create placeholder="选择或输入绝对目录路径" :disabled="scanning || browsing || !desktopConnected" class="path-select" :title="root" @keyup.enter="analyze(root)">
+        <el-select v-model="root" filterable allow-create placeholder="选择或输入绝对目录路径" :disabled="busy || !desktopConnected" class="path-select" :title="root" @keyup.enter="analyze(root)">
           <el-option v-for="path in roots" :key="path" :label="path" :value="path" />
         </el-select>
-        <el-button :disabled="!desktopConnected || scanning || browsing" title="选择目录" @click="pick"><FolderOpen :size="14" /></el-button>
-        <el-switch v-model="visual" active-text="可视化" aria-label="可视化模式" :disabled="scanning" />
+        <el-button :disabled="!desktopConnected || busy" title="选择目录" @click="pick"><FolderOpen :size="14" /></el-button>
+        <el-switch v-model="visual" active-text="可视化" aria-label="可视化模式" :disabled="busy" />
       </div>
       <div v-if="!desktopConnected" class="empty-state"><span class="empty-icon"><Monitor :size="30" /></span><h2>连接你的磁盘</h2><p>请在桌面应用中打开空间透视，读取本机的目录占用。</p><span class="state-label">浏览器预览 · 尚未连接桌面端</span></div>
       <div v-else-if="scanning"><ScanningRadar title="正在绘制空间分布" :sub-title="task?.path || root" :tips="[]"><ScanAction initial :scanning="true" :task="task" :hint="`已检查 ${task?.current || 0} 个文件 · 不跨文件系统`" stop-label="停止分析" /></ScanningRadar></div>
       <template v-else>
-        <div v-if="loaded || error" class="result-summary"><strong>{{ loaded ? formatSize(total) : '分析未完成' }}</strong><span>{{ directories.length }} 个文件与目录<template v-if="warning"> · 部分结果</template></span><small v-if="cached">复用本次分析</small><div class="summary-actions"><SummaryDetails label="分析范围" :count="1"><code :title="analyzedRoot || root">{{ analyzedRoot || root }}</code><p>仅统计当前文件系统，不跟随符号链接。容量为逻辑大小，共享依赖或硬链接不代表可重复释放的空间。</p><p v-if="cached">显示本次分析的目录快照；打开目录和返回不会重新扫描，点击“重新分析”才更新。</p><p>保留名单：{{ snapshotExclusions.length }} 项</p><code v-for="path in snapshotExclusions" :key="path" :title="path">{{ path }}</code></SummaryDetails><SummaryDetails :label="error ? '分析未完成' : '结果提示'" :count="(warning ? warning.split('\n').length : 0) + (error ? 1 : 0)" :tone="error ? 'danger' : warning ? 'warning' : undefined"><p v-if="error" class="detail-message danger">{{ error }}</p><p v-if="warning" class="detail-message warning">{{ warning }}</p><p v-if="!error && !warning">暂无结果提示</p></SummaryDetails></div></div>
+        <div v-if="loaded || error" class="result-summary"><strong>{{ loaded ? formatSize(total) : '分析未完成' }}</strong><span>{{ directories.length }} 个文件与目录<template v-if="warning"> · 部分结果</template></span><small v-if="cached">复用本次分析</small><div class="summary-actions"><SummaryDetails label="分析范围" :count="1"><code :title="analyzedRoot || root">{{ analyzedRoot || root }}</code><p>仅统计当前文件系统，不跟随符号链接。容量为逻辑大小，共享依赖或硬链接不代表可重复释放的空间。</p><p v-if="cached">显示本次分析的目录快照；打开目录和返回不会重新扫描，点击“重新分析”才更新。</p><p>保留名单：{{ snapshotExclusions.length }} 项</p><code v-for="path in snapshotExclusions" :key="path" :title="path">{{ path }}</code></SummaryDetails><SummaryDetails :label="error ? '分析未完成' : '结果提示'" :count="(warning ? warning.split('\n').length : 0) + (error ? 1 : 0)" :tone="error ? 'danger' : warning ? 'warning' : undefined"><p v-if="error" class="detail-message danger">{{ error }}</p><p v-if="warning" class="detail-message warning">{{ warning }}</p><p v-if="!error && !warning">暂无结果提示</p></SummaryDetails><ActionResults :report="actionReport" /></div></div>
         <template v-if="loaded">
-          <div class="breadcrumbs"><button v-for="crumb in breadcrumbs" :key="crumb.path" :title="crumb.path" :disabled="browsing" @click="browse(crumb.path)">{{ crumb.label }}</button><el-button text @click="reveal(analyzedRoot)">查看位置</el-button><el-button text @click="scanLarge">查看此目录大文件</el-button></div>
+          <div class="breadcrumbs"><button v-for="crumb in breadcrumbs" :key="crumb.path" :title="crumb.path" :disabled="busy" @click="browse(crumb.path)">{{ crumb.label }}</button><el-button text @click="reveal(analyzedRoot)">查看位置</el-button><el-button text :disabled="busy" @click="scanLarge">查看此目录大文件</el-button></div>
 
           <div v-if="visual" class="visual-layout">
             <div class="directory-list" aria-label="目录占用排行">
-              <button v-for="row in directories.slice(0, 120)" :key="row.path" class="directory-row" :disabled="browsing" :class="{ highlighted: highlighted === row.path }" :title="row.path" @mouseenter="highlighted = row.path" @mouseleave="highlighted = ''" @focus="highlighted = row.path" @blur="highlighted = ''" @click="drillDown(row)">
+              <button v-for="row in directories.slice(0, 120)" :key="row.path" class="directory-row" :disabled="busy" :class="{ highlighted: highlighted === row.path }" :title="row.path" @mouseenter="highlighted = row.path" @mouseleave="highlighted = ''" @focus="highlighted = row.path" @blur="highlighted = ''" @click="drillDown(row)" @contextmenu="openMenu(row, $event)">
                 <Folder v-if="row.is_dir" :size="21" /><File v-else :size="21" /><span>{{ folderName(row.path) }}</span><small>{{ row.size }}</small>
               </button>
               <button v-if="directories.length > 120" class="directory-row" @click="visual = false">查看其余 {{ directories.length - 120 }} 项</button>
               <p v-if="!directories.length" class="chart-empty">没有可读取的文件或目录</p>
             </div>
-            <StorageTreemap :items="directories" :highlighted="highlighted" @open="drillDown" @highlight="highlighted = $event" @show-list="visual = false" />
+            <StorageTreemap :items="directories" :highlighted="highlighted" :disabled="busy" @open="drillDown" @highlight="highlighted = $event" @show-list="visual = false" @contextmenu="openMenu" />
           </div>
           <div v-else class="table-panel">
-            <el-table :data="pageItems" empty-text="当前目录未发现可读取的文件或子目录" @row-click="drillDown">
+            <el-table :data="pageItems" empty-text="当前目录未发现可读取的文件或子目录" @row-click="drillDown" @row-contextmenu="tableMenu">
               <el-table-column label="目录" min-width="190" show-overflow-tooltip><template #default="{ row }"><div class="folder-cell"><Folder v-if="row.is_dir" :size="18" /><File v-else :size="18" /><span>{{ folderName(row.path) }}</span></div></template></el-table-column>
               <el-table-column label="占比" min-width="160"><template #default="{ row }"><el-progress :percentage="total ? Math.round(row.size_bytes / total * 100) : 0" :stroke-width="5" color="var(--accent)" /></template></el-table-column>
               <el-table-column prop="size" label="占用空间" width="120" align="right" />
-              <el-table-column width="85" align="center"><template #default="{ row }"><el-dropdown trigger="click" @click.stop><el-button text aria-label="目录或文件操作" @click.stop>更多<ChevronDown :size="13" /></el-button><template #dropdown><el-dropdown-menu><el-dropdown-item @click="reveal(row.path)">查看位置</el-dropdown-item><el-dropdown-item @click="copy(row.path)">复制路径</el-dropdown-item></el-dropdown-menu></template></el-dropdown></template></el-table-column>
+              <el-table-column width="85" align="center"><template #default="{ row }"><el-dropdown trigger="click" @click.stop><el-button text aria-label="目录或文件操作" @click.stop>更多<ChevronDown :size="13" /></el-button><template #dropdown><el-dropdown-menu><el-dropdown-item @click="reveal(row.path)">查看位置</el-dropdown-item><el-dropdown-item @click="copy(row.path)">复制路径</el-dropdown-item><el-dropdown-item divided :disabled="busy" @click="removeItem(row)">移入废纸篓</el-dropdown-item></el-dropdown-menu></template></el-dropdown></template></el-table-column>
             </el-table>
             <el-pagination v-if="directories.length > 100" v-model:current-page="page" small :page-size="100" :total="directories.length" layout="prev, pager, next" class="directory-pages" />
           </div>
+          <p class="footnote">右键文件或目录可移入废纸篓；清空废纸篓后才会释放磁盘空间。</p>
         </template>
         <div v-else-if="!error" class="empty-state"><span class="empty-icon"><HardDrive :size="30" /></span><h2>空间，从这里展开</h2><p>选择目录，查看文件与文件夹的空间占用。</p><ScanAction initial :scanning="false" :disabled="!root" label="分析目录" @start="analyze(root)" /></div>
       </template>
     </div>
+    <Teleport to="body"><div v-if="contextMenu" ref="menuElement" class="storage-context-menu" role="menu" :aria-label="folderName(contextMenu.item.path) + ' 的操作'" :style="{ left: `${contextMenu.x}px`, top: `${contextMenu.y}px` }" @keydown="menuKey" @contextmenu.prevent><p :title="contextMenu.item.path">{{ folderName(contextMenu.item.path) }}</p><button role="menuitem" @click="menuAction('open')"><FolderOpen :size="15" />查看位置</button><button role="menuitem" @click="menuAction('copy')">复制路径</button><button role="menuitem" class="delete-action" @click="menuAction('delete')"><Trash2 :size="15" />移入废纸篓</button></div></Teleport>
   </div>
 </template>
 
@@ -189,6 +263,11 @@ onMounted(async () => {
 .folder-cell svg { color: var(--accent); flex-shrink: 0; }
 :deep(.el-table__row) { cursor: pointer; }
 .footnote { color: var(--text-faint); font-size: 11px; line-height: 1.8; margin: 14px 0 0; }
+.storage-context-menu { position: fixed; z-index: 3000; width: 232px; padding: 6px; background: var(--surface-raised); color: var(--text); border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 8px 30px rgba(0,0,0,.2); }
+.storage-context-menu p { margin: 4px 8px 8px; font-size: 11px; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.storage-context-menu button { display: flex; align-items: center; gap: 8px; width: 100%; padding: 9px 10px; border: 0; border-radius: 6px; background: transparent; color: inherit; text-align: left; font: inherit; font-size: 12px; cursor: pointer; }
+.storage-context-menu button:hover, .storage-context-menu button:focus-visible { background: var(--accent-soft); outline: none; }
+.storage-context-menu .delete-action { color: var(--danger); border-top: 1px solid var(--line); margin-top: 4px; }
 .empty-state { min-height: 340px; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; }
 .empty-icon { display: grid; place-items: center; width: 78px; height: 78px; border-radius: 24px; background: linear-gradient(135deg, rgba(var(--accent-rgb), 0.13), rgba(var(--cyan-rgb), 0.06)); border: 1px solid var(--accent-border); color: var(--accent); margin-bottom: 24px; }
 .empty-state h2 { color: var(--text); font-size: 20px; font-weight: 500; margin: 0 0 12px; }
