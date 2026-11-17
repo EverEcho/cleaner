@@ -40,7 +40,7 @@
         "linux": "io.dbeaver.DBeaverCommunity",
         "macos": "dbeaver-community"
       },
-      "upstream_version": "26.2.4"
+      "upstream_version": "26.2.5"
     },
     {
       "id": "postman",
