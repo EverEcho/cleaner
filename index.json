@@ -40,7 +40,7 @@
         "linux": "io.dbeaver.DBeaverCommunity",
         "macos": "dbeaver-community"
       },
-      "upstream_version": "26.2.5"
+      "upstream_version": "26.2.5.2"
     },
     {
       "id": "postman",
@@ -81,7 +81,7 @@
         "linux": "com.brave.Browser",
         "macos": "brave-browser"
       },
-      "upstream_version": "v1.100.58"
+      "upstream_version": "v1.100.59"
     },
     {
       "id": "obsidian",
@@ -131,7 +131,7 @@
         "linux": "org.telegram.desktop",
         "macos": "telegram-desktop"
       },
-      "upstream_version": "v7.4.4"
+      "upstream_version": "v7.4.6"
     },
     {
       "id": "slack",
