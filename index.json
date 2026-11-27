@@ -131,7 +131,7 @@
         "linux": "org.telegram.desktop",
         "macos": "telegram-desktop"
       },
-      "upstream_version": "v7.4.6"
+      "upstream_version": "v7.4.7"
     },
     {
       "id": "slack",
